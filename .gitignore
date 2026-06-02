@@ -1,0 +1,21 @@
+# OS files
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data files (live in GCS, not git)
+*/raw/
+*/clean/
+*/scrape/source/
+
+# Temporary files
+*.zip
+college_sources_handoff/
+
+# Claude (keep skills, ignore personal state)
+.claude/*
+!.claude/skills/
