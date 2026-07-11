@@ -90,10 +90,14 @@ COLLEGE_RE = re.compile(r"College:\s*(E\d+)\s+(.*)")
 _WORD_BREAKS = [
     ("COMMUNICATIO", "N"),
     ("INSTRUMENTATI", "ON"),
+    ("INSTRUMENTATIO", "N"),
     ("TELECOMMUNIC", "ATION"),
+    ("TELECOMMUNICA", "TION"),
     ("ENVIRONMETA", "L"),    # ENVIRONMENTAL
     ("ENVIRONMENTA", "L"),
     ("BIOTECHNOLOG", "Y"),
+    ("Clou","d"),             # CLOUD
+    ("INTERNE", "T"),        # INTERNET
     ("MANUFACTURIN", "G"),
     ("SUSTAINABILIT", "Y"),
     ("ARTIFICIA", "L"),      # ARTIFICIAL
@@ -102,6 +106,19 @@ _WORD_BREAKS = [
 ]
 _WORD_BREAK_LOOKUP = {end: start for end, start in _WORD_BREAKS}
 
+# A line ending in "(" plus a SINGLE bare letter (e.g. "ENGINEERING(A",
+# "ENGG(I") is the start of a parenthetical word cut off by column width --
+# no single letter is a standalone abbreviation in this data, so it must be
+# a fragment. Deliberately NOT extended to all 2-3 letter runs: those are
+# often already-complete abbreviations followed by a new word, e.g. "(IOT"
+# then "INCLUDING BLOCK CHAIN)" or "(BIG" then "DATA)" -- gluing those
+# without a space would wrongly produce "IOTINCLUDING"/"BIGDATA".
+_PAREN_FRAGMENT_RE = re.compile(r"\([A-Za-z]?$")
+
+# Specific 2-3 letter "(" + fragment endings, individually confirmed against
+# the source PDF to always be mid-word continuations, never a complete
+# abbreviation followed by a new word (unlike "(IOT"/"(BIG" above).
+_PAREN_KNOWN_FRAGMENTS = ("(DA", "(AR", "(BL", "(CY", "(DE", "(SO", "(VLS")
 
 def _clean_cell(v: str | None) -> str:
     """Collapse newlines in a PDF cell value, repairing known mid-word breaks."""
@@ -110,17 +127,40 @@ def _clean_cell(v: str | None) -> str:
     parts = str(v).split("\n")
     result = parts[0]
     for part in parts[1:]:
-        # Check if the last word of `result` is a known broken fragment
-        last_token = result.rstrip().rsplit(None, 1)[-1] if result.strip() else ""
-        # Strip leading punctuation (e.g. opening bracket) to get the word fragment
-        last_word = last_token.lstrip("(")
-        expected_suffix = _WORD_BREAK_LOOKUP.get(last_word)
-        if expected_suffix is not None and (part == expected_suffix or part.startswith(expected_suffix + " ")):
-            result += part  # glue without space
-        else:
-            result += " " + part
-    return " ".join(result.split())
+        stripped_result = result.rstrip()
 
+        if stripped_result.endswith("-"):
+            # Hyphenated word wrap (e.g. "BIO-" / "TECHNOLOGY") -- the hyphen
+            # belongs to the word itself, so glue with no space and keep it.
+            result = stripped_result + part
+            continue
+
+        if part.startswith(")"):
+            # A wrapped closing paren never has a space before it.
+            result = stripped_result + part
+            continue
+
+        if _PAREN_FRAGMENT_RE.search(stripped_result) or stripped_result.endswith(_PAREN_KNOWN_FRAGMENTS):
+            result = stripped_result + part
+            continue
+
+        # Look for a known broken fragment as a SUFFIX of the text so far,
+        # not just as the whole last whitespace-token: punctuation like "("
+        # is often glued directly onto the preceding word with no space
+        # (e.g. "...ENGG(ARTIFICIA"), which would otherwise hide the match.
+        matched_frag = next(
+            (frag for frag in _WORD_BREAK_LOOKUP if stripped_result.endswith(frag)),
+            None,
+        )
+        expected_suffix = _WORD_BREAK_LOOKUP.get(matched_frag) if matched_frag else None
+        if expected_suffix is not None and (part == expected_suffix or part.startswith(expected_suffix + " ")):
+            result = stripped_result + part  # glue without space
+        else:
+            result = stripped_result + " " + part
+    # A space is never legitimate right before a closing paren, whether it
+    # came from a line-join above or was already in the source PDF text
+    # (e.g. "DESIGN )" appears as literal text on a single line).
+    return re.sub(r"\s+\)", ")", " ".join(result.split()))
 
 def _parse_rank(v: str) -> float | None:
     s = _clean_cell(v)
@@ -131,6 +171,82 @@ def _parse_rank(v: str) -> float | None:
     except ValueError:
         return None
 
+def _course_key(name: str) -> str:
+    """Strip whitespace/punctuation so differently-split PDF fragments compare equal."""
+    return re.sub(r"[^A-Z0-9]", "", name.upper())
+
+
+def canonicalize_course_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse course_name variants that are the same course but got split at
+    different mid-word points by pdfplumber (e.g. "...(D ATA SCIENCE)" vs
+    "...(DA TA SCIENCE)"). _WORD_BREAKS only repairs specific known split
+    points; this catches the rest by grouping names that are identical once
+    whitespace/punctuation is removed, and keeping whichever spelling is used
+    by the most distinct colleges as the canonical one.
+    """
+    college_counts = df.groupby("course_name")["college_code"].nunique()
+
+    canonical: dict[str, tuple[str, int]] = {}
+    for name, n_colleges in college_counts.items():
+        key = _course_key(name)
+        if key not in canonical or n_colleges > canonical[key][1]:
+            canonical[key] = (name, n_colleges)
+
+    mapping = {name: canonical[_course_key(name)][0] for name in college_counts.index}
+    changed = {name: canon for name, canon in mapping.items() if name != canon}
+    if changed:
+        print(f"\nCollapsed {len(changed)} course_name variant(s) into canonical spellings:")
+        for name, canon in sorted(changed.items()):
+            print(f"  {name!r} -> {canon!r}")
+
+    df["course_name"] = df["course_name"].map(mapping)
+    return df
+
+
+# Administrative degree-title prefixes that don't change WHICH program a row
+# is -- e.g. "B TECH IN COMPUTER ENGINEERING" vs "COMPUTER ENGINEERING" is the
+# same course, just some colleges spell out the full B.Tech title in the PDF
+# and others don't. Deliberately excludes "(HONS)" variants: Honours may be a
+# genuinely distinct track with its own seats/cutoffs, not pure formatting.
+_DEGREE_PREFIX_RE = re.compile(r"^(B\.?\s*TECH\s+IN\s+|BTECH\s+IN\s+)", re.IGNORECASE)
+
+
+def _normalize_course_name(name: str) -> str:
+    """
+    Formatting-only normalization for grouping the same program across
+    colleges: strips administrative degree prefixes, unifies ENGG/ENGINEERING
+    and parenthesis spacing, and standardizes case. Never touches the actual
+    subject/specialization wording, so it won't merge two different programs
+    (e.g. "ARTIFICIAL INTELLIGENCE AND MACHINE LEARNING" and "COMPUTER
+    SCIENCE AND ENGINEERING (AIML)" stay separate -- they may be distinct
+    AICTE-approved branches with different real cutoffs, not just spelling).
+    """
+    n = _DEGREE_PREFIX_RE.sub("", name.strip())
+    n = re.sub(r"\bENGG\b", "ENGINEERING", n, flags=re.IGNORECASE)
+    n = re.sub(r"\s*\(\s*", "(", n)
+    n = re.sub(r"\s*\)\s*", ")", n)
+    n = re.sub(r"\s+", " ", n).strip()
+    return n.upper()
+
+
+def apply_canonical_course_name(df: pd.DataFrame) -> pd.DataFrame:
+    """Overwrite course_name with its formatting-only canonical form (see _normalize_course_name)."""
+    names = df["course_name"].unique()
+    mapping = {name: _normalize_course_name(name) for name in names}
+
+    groups: dict[str, list[str]] = {}
+    for name, canon in mapping.items():
+        groups.setdefault(canon, []).append(name)
+    merged = {canon: variants for canon, variants in groups.items() if len(variants) > 1}
+    if merged:
+        total = sum(len(v) for v in merged.values())
+        print(f"\nNormalized {total} course_name variant(s) into {len(merged)} canonical name(s):")
+        for canon, variants in sorted(merged.items()):
+            print(f"  {canon!r} <- {sorted(variants)}")
+
+    df["course_name"] = df["course_name"].map(mapping)
+    return df
 
 def parse_pdf(path: Path, cats: list[str], domicile: str) -> list[dict]:
     """
@@ -138,6 +254,8 @@ def parse_pdf(path: Path, cats: list[str], domicile: str) -> list[dict]:
     unpivot category columns into rows, keep only non-null ranks.
     """
     rows: list[dict] = []
+
+    current_college: tuple[str | None, str | None] = (None, None)
 
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
@@ -151,14 +269,19 @@ def parse_pdf(path: Path, cats: list[str], domicile: str) -> list[dict]:
 
             tables = page.extract_tables()
 
-            # Each table on the page corresponds to one college header (same order)
+            # Consume headers in order as real tables are found on this page.
+            # A table found before its header shows up (or with no header left
+            # to consume on this page) inherits current_college from a prior page.
+            header_idx = 0
             for i, table in enumerate(tables):
                 if not table or len(table) < 2:
                     continue
 
-                college_code, college_name = (
-                    college_headers[i] if i < len(college_headers) else (None, None)
-                )
+                if header_idx < len(college_headers):
+                    current_college = college_headers[header_idx]
+                    header_idx += 1
+
+                college_code, college_name = current_college
 
                 header_row = table[0]
                 # Validate category columns match expected
@@ -218,6 +341,8 @@ def main() -> None:
     df["closing_rank"] = pd.to_numeric(df["closing_rank"], errors="coerce")
     df["year"] = df["year"].astype("Int64")
     df["round"] = df["round"].astype("Int64")
+    df = canonicalize_course_names(df)
+    df = apply_canonical_course_name(df)
 
     print(f"\nTotal rows     : {len(df):,}")
     print(f"Colleges       : {df['college_code'].nunique()}")
