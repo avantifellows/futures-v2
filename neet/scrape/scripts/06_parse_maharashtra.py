@@ -44,10 +44,48 @@ STATUS_TAIL_RE = re.compile(r"\s*\([^()]*\)?\s*$")  # trailing (status) or dangl
 # Gender token that separates Name from Category.
 GENDER_RE = re.compile(r"\b([MF])\b")
 
+# Maharashtra's ALLOTTED seat category is the last category-like token in the
+# segment between gender and the college. It carries the base category plus
+# optional prefixes/suffix we decompose into flags:
+#   H  prefix  -> Home-University seat   (HOPEN, HOBC, HEWS ...)
+#   EM prefix  -> EWS-Minority sub-pool  (EMOBC, EMSEBC, EMNTD ...)
+#   W  suffix / trailing (W) or bare 'W' -> female-reserved seat
+# We match the base against a known vocabulary so junk tokens (HA/PEM/DEF flags,
+# stray words) don't get mistaken for a category.
+BASE_CATEGORIES = {
+    "OPEN", "OBC", "SEBC", "EWS", "SC", "ST",
+    "NTB", "NTC", "NTD", "VJA", "MINO", "MKB",
+    "DEF1", "DEF2", "DEF3", "I.Q.", "ORPHAN", "ORPHANC",
+}
+
+
+def classify_category(seg: str):
+    """From the category segment, return (base_category, is_female, is_home_univ,
+    is_em) or None if no known category token is found."""
+    is_female = ("(W)" in seg) or bool(re.search(r"\bW\b", seg))
+    # remove parentheticals and standalone W, then scan tokens right-to-left for
+    # the first one that resolves to a known base category.
+    s = re.sub(r"\([^)]*\)", " ", seg)
+    s = re.sub(r"\bW\b", " ", s)
+    for tok in reversed(s.split()):
+        t = tok.strip().upper().lstrip("-")
+        is_em = t.startswith("EM")
+        core = t[2:] if is_em else t
+        is_home = core.startswith("H") and core[1:] in BASE_CATEGORIES
+        base = core[1:] if is_home else core
+        # a trailing W got stripped above, but EMOBCW-style tokens keep W in-core
+        if base.endswith("W") and base[:-1] in BASE_CATEGORIES:
+            base = base[:-1]
+            is_female = True
+        if base in BASE_CATEGORIES:
+            return base, is_female, is_home, is_em
+    return None
+
 
 def parse(src: Path):
-    buckets = {}          # (college_code, college_name, category) -> max AIR
-    n = skip_nocollege = skip_other = 0
+    # key -> max AIR, where key = (code, name, base_cat, female, home, em)
+    buckets = {}
+    n = skip_nocollege = skip_other = skip_nocat = 0
     with pdfplumber.open(src) as pdf:
         for page in pdf.pages:
             for raw in (page.extract_text() or "").split("\n"):
@@ -60,32 +98,34 @@ def parse(src: Path):
 
                 col = COLLEGE_RE.search(rest)
                 if not col:
-                    # e.g. "Disqualified-Allotted by MCC" — no state seat
+                    # e.g. "Choice Not Available" / "Disqualified" — no seat
                     skip_nocollege += 1
                     continue
                 code = col.group(1)
-                # strip the trailing (status)/(No... off the college name
                 cname = STATUS_TAIL_RE.sub("", col.group(2)).strip()
                 pre = rest[: col.start()].strip()  # "Name... G Cat [flags]"
 
-                # split Name from Category at the LAST standalone gender token
                 gmatches = list(GENDER_RE.finditer(pre))
                 if not gmatches:
                     skip_other += 1
                     continue
-                g = gmatches[-1]
-                after_gender = pre[g.end():].strip()  # "Cat [subflags]"
+                after_gender = pre[gmatches[-1].end():].strip()
                 if not after_gender:
                     skip_other += 1
                     continue
-                # Category = first token; the rest are sub-quota flags (W/DEF1/EMR..)
-                category = after_gender.split()[0]
+
+                cls = classify_category(after_gender)
+                if cls is None:
+                    # no recognised category token — report, don't silently keep
+                    skip_nocat += 1
+                    continue
+                base, female, home, em = cls
 
                 n += 1
-                key = (code, cname, category)
+                key = (code, cname, base, female, home, em)
                 if air > buckets.get(key, 0):
                     buckets[key] = air
-    return buckets, n, skip_nocollege, skip_other
+    return buckets, n, skip_nocollege, skip_other, skip_nocat
 
 
 def main():
@@ -94,21 +134,33 @@ def main():
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
-    buckets, n, skip_nc, skip_o = parse(args.src)
+    buckets, n, skip_nc, skip_o, skip_nocat = parse(args.src)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Institute", "Institute Code", "Category",
+        w.writerow(["Institute", "Institute Code", "Category", "Is Female Seat",
+                    "Is Home University", "Is EWS Minority",
                     "Academic Program Name", "Seat Type", "Round",
                     "Closing Rank", "rank_space"])
-        for (code, cname, cat), air in sorted(buckets.items(), key=lambda x: x[1]):
-            # MH R3 file is MBBS/BDS combined; program not distinguished per row here.
-            w.writerow([cname, code, cat, "MBBS/BDS", "State Quota", "R3",
-                        air, "NEET AIR"])
-    print(f"wrote {args.out}: {len(buckets)} buckets from {n} rows "
-          f"(skipped: {skip_nc} no-college, {skip_o} unparsed)")
-    print("  colleges:", len({(c, nm) for c, nm, _ in buckets}))
-    print("  categories:", dict(Counter(k[2] for k in buckets)))
+        for (code, cname, base, female, home, em), air in sorted(
+            buckets.items(), key=lambda x: x[1]
+        ):
+            # MH R3 file is MBBS/BDS combined; program not distinguished per row.
+            w.writerow([cname, code, base, "Yes" if female else "No",
+                        "Yes" if home else "No", "Yes" if em else "No",
+                        "MBBS/BDS", "State Quota", "R3", air, "NEET AIR"])
+
+    # miss rate: rows with a college but no recognisable category (the floor)
+    allotted = n + skip_nocat
+    miss_pct = 100 * skip_nocat / allotted if allotted else 0
+    print(f"wrote {args.out}: {len(buckets)} buckets from {n} allotted rows")
+    print(f"  skipped: {skip_nc} no-college (Choice Not Available/DQ), "
+          f"{skip_o} no-gender, {skip_nocat} no-recognised-category")
+    print(f"  category miss rate (of rows WITH a college): "
+          f"{skip_nocat}/{allotted} = {miss_pct:.2f}%")
+    print("  colleges:", len({(c, nm) for c, nm, *_ in buckets}))
+    print("  base categories:", dict(Counter(k[2] for k in buckets)))
+    print("  female-seat buckets:", sum(1 for k in buckets if k[3]))
 
 
 if __name__ == "__main__":
