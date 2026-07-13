@@ -21,7 +21,8 @@ Output:
 Columns:
   college_code      — KEA college code (e.g. E001)
   college_name      — full name as in PDF
-  course_name       — normalised course name (whitespace collapsed)
+  course_name_raw   — minimally repaired course name extracted from the PDF
+  course_name       — canonical course name for cross-college comparisons
   domicile_pool     — GEN (Rest of KA) or HK (Kalyana Karnataka 371j)
   category_code     — e.g. GM, 1G, 2AG, SCH, STH …
   closing_rank      — numeric cutoff rank (NULL if seat not allotted)
@@ -42,11 +43,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import multiprocessing as mp
 import re
 import sys
 from pathlib import Path
 
-import pandas as pd
 import pdfplumber
 
 HERE = Path(__file__).resolve().parent
@@ -162,14 +163,18 @@ def _clean_cell(v: str | None) -> str:
     # (e.g. "DESIGN )" appears as literal text on a single line).
     return re.sub(r"\s+\)", ")", " ".join(result.split()))
 
-def _parse_rank(v: str) -> float | None:
-    s = _clean_cell(v)
+def _parse_rank(v: str | None) -> float | None:
+    # pdfplumber sometimes wraps the final decimal digit onto a new line,
+    # e.g. ``124589.\n5`` or ``14631.87\n5``. Whitespace is never meaningful
+    # inside a rank, so remove it rather than passing the value through the
+    # prose-oriented _clean_cell(), which deliberately inserts word spaces.
+    s = re.sub(r"\s+", "", str(v)) if v is not None else ""
     if s in ("--", "-", ""):
         return None
     try:
         return float(s)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise ValueError(f"Unparseable rank cell: {v!r}") from exc
 
 def _course_key(name: str) -> str:
     """Strip whitespace/punctuation so differently-split PDF fragments compare equal."""
@@ -204,25 +209,15 @@ def canonicalize_course_names(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# Administrative degree-title prefixes that don't change WHICH program a row
-# is -- e.g. "B TECH IN COMPUTER ENGINEERING" vs "COMPUTER ENGINEERING" is the
-# same course, just some colleges spell out the full B.Tech title in the PDF
-# and others don't. Deliberately excludes "(HONS)" variants: Honours may be a
-# genuinely distinct track with its own seats/cutoffs, not pure formatting.
-_DEGREE_PREFIX_RE = re.compile(r"^(B\.?\s*TECH\s+IN\s+|BTECH\s+IN\s+)", re.IGNORECASE)
-
-
 def _normalize_course_name(name: str) -> str:
     """
-    Formatting-only normalization for grouping the same program across
-    colleges: strips administrative degree prefixes, unifies ENGG/ENGINEERING
-    and parenthesis spacing, and standardizes case. Never touches the actual
-    subject/specialization wording, so it won't merge two different programs
-    (e.g. "ARTIFICIAL INTELLIGENCE AND MACHINE LEARNING" and "COMPUTER
-    SCIENCE AND ENGINEERING (AIML)" stay separate -- they may be distinct
-    AICTE-approved branches with different real cutoffs, not just spelling).
+    Formatting-only normalization for grouping the same source label: unifies
+    ENGG/ENGINEERING and parenthesis spacing, and standardizes case. Degree
+    prefixes are deliberately preserved: the PDFs can list both "B TECH IN
+    COMPUTER SCIENCE" and "COMPUTER SCIENCE" under one college with different
+    cutoffs, so removing the prefix would merge distinct seat buckets.
     """
-    n = _DEGREE_PREFIX_RE.sub("", name.strip())
+    n = name.strip()
     n = re.sub(r"\bENGG\b", "ENGINEERING", n, flags=re.IGNORECASE)
     n = re.sub(r"\s*\(\s*", "(", n)
     n = re.sub(r"\s*\)\s*", ")", n)
@@ -267,19 +262,38 @@ def parse_pdf(path: Path, cats: list[str], domicile: str) -> list[dict]:
                 if m:
                     college_headers.append((m.group(1).strip(), m.group(2).strip()))
 
-            tables = page.extract_tables()
+            tables = [table for table in page.extract_tables() if table and len(table) >= 2]
 
-            # Consume headers in order as real tables are found on this page.
-            # A table found before its header shows up (or with no header left
-            # to consume on this page) inherits current_college from a prior page.
-            header_idx = 0
+            # In both official PDFs Presidency University (E237) has a header-
+            # only page followed by its table on the next page. Persist that
+            # header even though there is no table yet. For all other pages the
+            # PDF has either a one-to-one header/table mapping or one inherited
+            # table with no header. Reject any new layout instead of silently
+            # assigning ranks to the wrong college.
+            if college_headers and not tables:
+                if len(college_headers) != 1:
+                    raise ValueError(
+                        f"p{page.page_number}: {len(college_headers)} college headers "
+                        "but no tables"
+                    )
+                current_college = college_headers[0]
+                page.close()
+                continue
+
+            if college_headers and len(college_headers) != len(tables):
+                raise ValueError(
+                    f"p{page.page_number}: {len(college_headers)} college headers "
+                    f"for {len(tables)} tables"
+                )
+
             for i, table in enumerate(tables):
-                if not table or len(table) < 2:
-                    continue
+                if college_headers:
+                    current_college = college_headers[i]
 
-                if header_idx < len(college_headers):
-                    current_college = college_headers[header_idx]
-                    header_idx += 1
+                if current_college[0] is None or current_college[1] is None:
+                    raise ValueError(
+                        f"p{page.page_number} table {i}: table has no college header"
+                    )
 
                 college_code, college_name = current_college
 
@@ -287,10 +301,9 @@ def parse_pdf(path: Path, cats: list[str], domicile: str) -> list[dict]:
                 # Validate category columns match expected
                 actual_cats = [_clean_cell(c) for c in header_row[1:]]
                 if actual_cats != cats:
-                    # Tolerate minor mismatches but warn
-                    print(
-                        f"  WARNING p{page.page_number} table {i}: "
-                        f"expected {len(cats)} cats, got {len(actual_cats)}"
+                    raise ValueError(
+                        f"p{page.page_number} table {i}: category columns differ; "
+                        f"expected {cats}, got {actual_cats}"
                     )
 
                 for data_row in table[1:]:
@@ -314,10 +327,23 @@ def parse_pdf(path: Path, cats: list[str], domicile: str) -> list[dict]:
                                 "round": ROUND,
                             })
 
+            # pdfplumber caches page layout objects; releasing each page keeps
+            # the two 100+ page PDFs within a modest, predictable memory bound.
+            page.close()
+
     return rows
 
 
+def parse_pdf_isolated(path: Path, cats: list[str], domicile: str) -> list[dict]:
+    """Parse one large PDF in a short-lived process so layout caches are released."""
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=1) as pool:
+        return pool.starmap(parse_pdf, [(path, cats, domicile)])[0]
+
+
 def main() -> None:
+    import pandas as pd
+
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -329,20 +355,42 @@ def main() -> None:
         if not path.exists():
             sys.exit(f"Missing PDF: {path}")
 
-    print("Parsing GEN (Rest of Karnataka)...")
-    gen_rows = parse_pdf(GEN_PDF, CATS_GEN, "GEN")
-    print(f"  {len(gen_rows):,} non-null category-rank rows")
-
     print("Parsing HK (Kalyana Karnataka 371j)...")
-    hk_rows = parse_pdf(HK_PDF, CATS_HK, "HK")
+    hk_rows = parse_pdf_isolated(HK_PDF, CATS_HK, "HK")
     print(f"  {len(hk_rows):,} non-null category-rank rows")
+
+    print("Parsing GEN (Rest of Karnataka)...")
+    gen_rows = parse_pdf_isolated(GEN_PDF, CATS_GEN, "GEN")
+    print(f"  {len(gen_rows):,} non-null category-rank rows")
 
     df = pd.DataFrame(gen_rows + hk_rows)
     df["closing_rank"] = pd.to_numeric(df["closing_rank"], errors="coerce")
     df["year"] = df["year"].astype("Int64")
     df["round"] = df["round"].astype("Int64")
+    df["course_name_raw"] = df["course_name"]
     df = canonicalize_course_names(df)
     df = apply_canonical_course_name(df)
+
+    required = ["college_code", "college_name", "course_name_raw", "course_name"]
+    missing = df[required].isna().any()
+    if missing.any():
+        raise ValueError(f"Required fields contain nulls: {missing[missing].index.tolist()}")
+
+    grain = [
+        "college_code", "course_name", "domicile_pool", "category_code", "year", "round"
+    ]
+    duplicate_rows = df.duplicated(grain, keep=False)
+    if duplicate_rows.any():
+        sample = df.loc[duplicate_rows, grain + ["closing_rank"]].head(10)
+        raise ValueError(f"Duplicate cutoff grain after normalization:\n{sample.to_string(index=False)}")
+
+    if len(df) != 13_604:
+        raise ValueError(f"Expected 13,604 non-null cutoff rows, got {len(df):,}")
+    if df["college_code"].nunique() != 229:
+        raise ValueError(f"Expected 229 colleges, got {df['college_code'].nunique()}")
+    e237_pools = set(df.loc[df["college_code"] == "E237", "domicile_pool"])
+    if e237_pools != {"GEN", "HK"}:
+        raise ValueError(f"E237 must be present in both pools, got {sorted(e237_pools)}")
 
     print(f"\nTotal rows     : {len(df):,}")
     print(f"Colleges       : {df['college_code'].nunique()}")
