@@ -15,6 +15,22 @@ Written for the College DB layout; paths point at that repo's `source/<XX>/` and
 decoupled, refresh by running the pipeline in College DB and copying its
 `extracted_data/ALL_STATES_consolidated_5cat_govt.csv` into `state_cet/raw/`.
 
+### Decoupled exception: KCET 2025 detailed cutoffs
+
+`scripts/parse_KA_2025.py` runs directly in this repository. Place the two
+official KEA Third Round PDFs at:
+
+- `source/KA/engineering/KA_engg_2025_GEN_R3.pdf`
+- `source/KA/engineering/KA_engg_2025_HK_R3.pdf`
+
+Then run `python scripts/parse_KA_2025.py --dry-run` to validate or omit
+`--dry-run` to write
+`extracted_data/KA_engg_2025_all_cutoffs_R3.csv`. The parser fails closed on
+layout/category drift, preserves raw and normalized course labels, handles
+header-only continuation pages, and retains wrapped fractional ranks. The
+static 2025 anchors are 13,604 rows, 229 colleges, 140 course labels, and 47
+category codes.
+
 ## Chain that produces the neutral fact
 
 Per-state `state_<XX>.py` / `download_<XX>.py` parse each authority's PDFs →
