@@ -19,12 +19,17 @@ rank_space = 'NEET AIR' (national).
 from __future__ import annotations
 import csv, sys, warnings
 from collections import defaultdict
+from pathlib import Path
 import pdfplumber
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _institute import split_institute
+
 warnings.filterwarnings("ignore")
-R1 = sys.argv[1] if len(sys.argv) > 1 else "aiq_r1.pdf"
-R3 = sys.argv[2] if len(sys.argv) > 2 else "aiq.pdf"
-OUT = sys.argv[3] if len(sys.argv) > 3 else "neet_aiq_2025_cutoffs.csv"
+_ROOT = Path(__file__).resolve().parent.parent  # neet/scrape/
+R1 = sys.argv[1] if len(sys.argv) > 1 else str(_ROOT / "source" / "aiq_r1.pdf")
+R3 = sys.argv[2] if len(sys.argv) > 2 else str(_ROOT / "source" / "aiq.pdf")
+OUT = sys.argv[3] if len(sys.argv) > 3 else str(_ROOT / "extracted_data" / "neet_aiq_2025_cutoffs.csv")
 
 COURSES = {"MBBS", "BDS", "B.SC. NURSING", "BSC NURSING", "B.SC NURSING"}
 CATEGORIES = {"Open", "OBC", "EWS", "SC", "ST",
@@ -113,10 +118,15 @@ def main():
 
     with open(OUT, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Institute", "Category", "Academic Program Name",
-                    "Seat Type", "Round", "Closing Rank", "rank_space"])
+        w.writerow(["Institute", "Address", "State", "Category",
+                    "Academic Program Name", "Seat Type", "Round",
+                    "Closing Rank", "rank_space"])
         for (inst, cat, course), air in sorted(buckets.items(), key=lambda x: x[1]):
-            w.writerow([inst, cat, course, "All India", "R1+R3", air, "NEET AIR"])
+            # The AIQ institute cell packs name+address+state+pincode; split it
+            # here (at the parser) so the CSV carries a clean name + kept address.
+            name, address, state = split_institute(inst)
+            w.writerow([name, address, state, cat, course, "All India",
+                        "R1+R3", air, "NEET AIR"])
     print(f"wrote {OUT}: {len(buckets):,} buckets")
 
     # anchor: AIIMS New Delhi MBBS by category (must be present now)

@@ -34,6 +34,14 @@ CONFIGS = {
 }
 
 
+# Category values that are NOT a real state category — they mark All-India-Quota
+# seats surrendered into state counselling. AIQ is covered comprehensively by the
+# national file (01_parse_aiq.py), so we drop these from the STATE dataset to keep
+# the state category list clean. (NRI, management etc. ARE real seat categories —
+# keep them.)
+NON_STATE_CATEGORIES = {"AIQ", "ALL INDIA", "ALL INDIA QUOTA"}
+
+
 def clean(s):
     return (s or "").replace("\n", " ").strip()
 
@@ -66,6 +74,9 @@ def parse_state(state, src: Path, out: Path):
                     cat = clean(r[cfg["category"]])
                     if not air.isdigit() or not inst or not cat or prog is None:
                         skip += 1
+                        continue
+                    if cat.upper() in NON_STATE_CATEGORIES:
+                        skip += 1  # AIQ seat — covered by the national file
                         continue
                     n += 1
                     key = (inst, cat, prog, quota)
