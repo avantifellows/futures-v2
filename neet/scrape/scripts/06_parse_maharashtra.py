@@ -58,6 +58,27 @@ BASE_CATEGORIES = {
     "DEF1", "DEF2", "DEF3", "I.Q.", "ORPHAN", "ORPHANC",
 }
 
+# The MH R3 file does not label MBBS vs BDS per row, but the college name does
+# (Amogh's heuristic): a Medical college -> MBBS, a Dental college -> BDS.
+# MH fuses M/D into acronyms (GMC/GSMC/BJMC/IGMC/PMC = medical; GDC = dental), so
+# we match those acronym suffixes plus the spelled-out words. A name hitting both
+# (or neither) is flagged "REVIEW" for manual check rather than guessed.
+_MED_RE = re.compile(r"MEDICAL|\bMED\b|[A-Z]MC\b|\bMC\b|IMS|\bMH\b")
+_DEN_RE = re.compile(r"DENTAL|[A-Z]DC\b|\bDC\b")
+
+
+def program_from_name(name: str) -> str:
+    u = name.upper()
+    med = bool(_MED_RE.search(u))
+    den = bool(_DEN_RE.search(u))
+    if med and den:
+        return "REVIEW"   # ambiguous — manual review
+    if med:
+        return "MBBS"
+    if den:
+        return "BDS"
+    return "REVIEW"       # neither — manual review
+
 
 def classify_category(seg: str):
     """From the category segment, return (base_category, is_female, is_home_univ,
@@ -142,13 +163,16 @@ def main():
                     "Is Home University", "Is EWS Minority",
                     "Academic Program Name", "Seat Type", "Round",
                     "Closing Rank", "rank_space"])
+        review = set()
         for (code, cname, base, female, home, em), air in sorted(
             buckets.items(), key=lambda x: x[1]
         ):
-            # MH R3 file is MBBS/BDS combined; program not distinguished per row.
+            program = program_from_name(cname)
+            if program == "REVIEW":
+                review.add(cname)
             w.writerow([cname, code, base, "Yes" if female else "No",
                         "Yes" if home else "No", "Yes" if em else "No",
-                        "MBBS/BDS", "State Quota", "R3", air, "NEET AIR"])
+                        program, "State Quota", "R3", air, "NEET AIR"])
 
     # miss rate: rows with a college but no recognisable category (the floor)
     allotted = n + skip_nocat
@@ -161,6 +185,12 @@ def main():
     print("  colleges:", len({(c, nm) for c, nm, *_ in buckets}))
     print("  base categories:", dict(Counter(k[2] for k in buckets)))
     print("  female-seat buckets:", sum(1 for k in buckets if k[3]))
+    if review:
+        print(f"  ⚠ program REVIEW (name matched both/neither MC/DC) — {len(review)} colleges:")
+        for nm in sorted(review):
+            print(f"      {nm}")
+    else:
+        print("  program (MBBS/BDS from college name): 0 colleges need review")
 
 
 if __name__ == "__main__":
