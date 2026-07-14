@@ -20,9 +20,13 @@ These CSVs feed `college-predictor` (`scripts/generate_neet_data.py` →
 | `03_parse_karnataka.py` | Karnataka | R3 | per-student table (KEA codes) | NEET AIR |
 | `04_parse_flat_states.py` | West Bengal / Madhya Pradesh / Punjab | R1/R1/R2 | flat per-student tables | NEET AIR |
 | `05_parse_andhra.py` | Andhra Pradesh | R3 | section-header (college as a row) | NEET AIR |
+| `06_parse_maharashtra.py` | Maharashtra | R3 | space-aligned text; category segment decoded | NEET AIR |
+| `07_parse_telangana.py` | Telangana | Mop-up | text, `COLL ::` section headers | NEET AIR |
+| `08_parse_himachal.py` | Himachal Pradesh | R3 | clean table | NEET AIR |
+| `09_parse_kerala.py` | Kerala | P3 | table; state-rank → AIR via rank-list crosswalk | NEET AIR (converted) |
 
-Not yet parsed (bespoke work): Kerala (rank is a **state** rank, needs AIR conversion),
-Telangana / Maharashtra / Himachal (no clean table grid).
+All 11 sources (AIQ + 10 states) are parsed. See "Known limitations" below for the
+per-source caveats (mop-up phase, converted ranks, inferred MBBS/BDS, etc.).
 
 ## Cutoff definition
 
@@ -51,14 +55,13 @@ Closing Rank, rank_space` (Gujarat also keeps `NEET Score` / `Percentile`).
 ## Running
 
 ```bash
-# one source
-python3 scrape/scripts/03_parse_karnataka.py
-# flat states (all three)
-python3 scrape/scripts/04_parse_flat_states.py --all
+python3 scrape/scripts/run_all.py            # every source
+python3 scrape/scripts/03_parse_karnataka.py # one source
+python3 scrape/scripts/04_parse_flat_states.py --all   # WB / MP / Punjab
 ```
 
-Requires `pdfplumber`. The AIQ parse reads ~3,000 pages across two PDFs and takes several
-minutes; the state files are fast.
+Requires `pdfplumber`. The AIQ parse (~3,000 pages across two PDFs) and the Kerala
+crosswalk build (~520-page rank list) each take a few minutes; the rest are fast.
 
 ## Score → rank model
 
@@ -66,3 +69,26 @@ The marks→AIR model that turns a student's NEET score into a rank lives in the
 `college-predictor` repo (`scripts/fit_score_rank_model.py`), calibrated from the
 Telangana merit list + MP + Punjab score/rank pairs. It is a predictor artifact, not a
 published cutoff, so it does not live here.
+
+## Known limitations & things to review
+
+Per-source caveats worth a human check before treating any of these as authoritative:
+
+- **Telangana is MOP-UP phase data.** The TG allotment file is the mop-up (last)
+  round, where only leftover seats remain — so its closing ranks are much *looser*
+  than the main counselling rounds (e.g. Osmania OPEN closes ~AIR 439k here). If a
+  main-round TG allotment becomes available, prefer it.
+- **Kerala rank→AIR is converted, not native.** Kerala's file lists a Kerala state
+  rank; we convert to NEET AIR via the KEAM state medical rank list crosswalk
+  (`mbbsranklist.pdf`). 17/6,708 rows couldn't be mapped (dropped).
+- **MBBS/BDS is inferred from the college name** for Maharashtra, Himachal, Kerala
+  (their files don't label degree per row) using Amogh's MC/MED→MBBS, DC→BDS
+  heuristic. Kerala has **23 buckets flagged `REVIEW`** (2 ambiguous names: Azeezia
+  "Medi Science", MES "MED-" Dental) that need manual assignment.
+- **Rounds differ by state** — R1 (WB, Punjab, MP), R3 (most), mop-up (TG). Labelled
+  per row in `Round`. R1-only states have tighter cutoffs than fuller-round states.
+- **Big/cryptic category lists.** Karnataka (~42 codes) and Maharashtra (~63, once
+  female/home-univ/EWS-minority splits are folded in) produce long dropdowns — a UX
+  curation decision for the predictor.
+- **BSc Nursing coverage is minimal** — only a handful of AIQ nursing seats; state
+  files here are MBBS/BDS.

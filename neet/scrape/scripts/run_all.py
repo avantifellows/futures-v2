@@ -16,6 +16,10 @@ STEPS = [
     ["03_parse_karnataka.py"],
     ["04_parse_flat_states.py", "--all"],
     ["05_parse_andhra.py"],
+    ["06_parse_maharashtra.py"],
+    ["07_parse_telangana.py"],
+    ["08_parse_himachal.py"],
+    ["09_parse_kerala.py"],
 ]
 
 
