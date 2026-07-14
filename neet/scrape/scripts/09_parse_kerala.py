@@ -30,6 +30,20 @@ DEFAULT_SRC = ROOT / "source" / "kerala.pdf"
 DEFAULT_RANKLIST = ROOT / "source" / "kerala_ranklist.pdf"
 DEFAULT_OUT = ROOT / "extracted_data" / "neet_kerala_2025_cutoffs.csv"
 
+# Verified MBBS/BDS overrides for colleges whose name defeats the heuristic
+# (confirmed against NMC/NDC listings). Keyed on a distinctive name substring.
+PROGRAM_OVERRIDES = {
+    "Azeezia Institute of Medi": "MBBS",   # NMC medical college, 100 MBBS seats
+    "MES Dental College": "BDS",           # NDC dental college, 100 BDS seats
+}
+
+
+def resolve_program(college: str) -> str:
+    for frag, prog in PROGRAM_OVERRIDES.items():
+        if frag.lower() in college.lower():
+            return prog
+    return program_from_name(college)
+
 
 def build_crosswalk(ranklist: Path):
     """ApplNo->AIR and StateRank->AIR from the KEAM state medical rank list."""
@@ -100,7 +114,7 @@ def main():
         w.writerow(["Institute", "Category", "Academic Program Name",
                     "Seat Type", "Round", "Closing Rank", "rank_space"])
         for (college, cat), air in sorted(buckets.items(), key=lambda x: x[1]):
-            w.writerow([college, cat, program_from_name(college), "State Quota",
+            w.writerow([college, cat, resolve_program(college), "State Quota",
                         "P3", air, "NEET AIR"])
     print(f"wrote {args.out}: {len(buckets)} buckets from {n} rows "
           f"({miss} unmapped rows dropped)")
