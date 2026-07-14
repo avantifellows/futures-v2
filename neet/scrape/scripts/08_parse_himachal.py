@@ -11,10 +11,13 @@ inserts stray spaces into some labels ("Economic aly Weaker Sections",
 "Manageme nt Quota") which we normalise. rank_space = 'NEET AIR'.
 """
 from __future__ import annotations
-import argparse, csv, re, warnings
+import argparse, csv, re, sys, warnings
 from collections import Counter
 from pathlib import Path
 import pdfplumber
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _institute import program_from_name
 
 warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,7 +84,7 @@ def main():
         w.writerow(["Institute", "Category", "Seat Type",
                     "Academic Program Name", "Round", "Closing Rank", "rank_space"])
         for (inst, cat, adm), air in sorted(buckets.items(), key=lambda x: x[1]):
-            w.writerow([inst, cat, adm, "MBBS/BDS", "R3", air, "NEET AIR"])
+            w.writerow([inst, cat, adm, program_from_name(inst), "R3", air, "NEET AIR"])
     print(f"wrote {args.out}: {len(buckets)} buckets from {n} rows ({skip} skipped)")
     print("  colleges:", len({k[0] for k in buckets}))
     print("  categories:", dict(Counter(k[1] for k in buckets)))

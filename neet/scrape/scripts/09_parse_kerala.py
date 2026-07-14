@@ -16,10 +16,13 @@ Cutoff = MAX AIR per (college, allotted category). rank_space = 'NEET AIR'
 (converted). Rows whose rank/applno can't be mapped are reported, not guessed.
 """
 from __future__ import annotations
-import argparse, csv, re, warnings
+import argparse, csv, re, sys, warnings
 from collections import Counter
 from pathlib import Path
 import pdfplumber
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _institute import program_from_name
 
 warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
@@ -97,8 +100,8 @@ def main():
         w.writerow(["Institute", "Category", "Academic Program Name",
                     "Seat Type", "Round", "Closing Rank", "rank_space"])
         for (college, cat), air in sorted(buckets.items(), key=lambda x: x[1]):
-            w.writerow([college, cat, "MBBS/BDS", "State Quota", "P3",
-                        air, "NEET AIR"])
+            w.writerow([college, cat, program_from_name(college), "State Quota",
+                        "P3", air, "NEET AIR"])
     print(f"wrote {args.out}: {len(buckets)} buckets from {n} rows "
           f"({miss} unmapped rows dropped)")
     print("  colleges:", len({k[0] for k in buckets}))

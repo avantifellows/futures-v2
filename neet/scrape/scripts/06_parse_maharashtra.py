@@ -22,10 +22,13 @@ Rows with no college (e.g. "... Disqualified-Allotted by MCC") are skipped.
 Cutoff = MAX AIR per (college, category). rank_space = 'NEET AIR'.
 """
 from __future__ import annotations
-import argparse, csv, re, warnings
+import argparse, csv, re, sys, warnings
 from collections import Counter
 from pathlib import Path
 import pdfplumber
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _institute import program_from_name
 
 warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,28 +60,6 @@ BASE_CATEGORIES = {
     "NTB", "NTC", "NTD", "VJA", "MINO", "MKB",
     "DEF1", "DEF2", "DEF3", "I.Q.", "ORPHAN", "ORPHANC",
 }
-
-# The MH R3 file does not label MBBS vs BDS per row, but the college name does
-# (Amogh's heuristic): a Medical college -> MBBS, a Dental college -> BDS.
-# MH fuses M/D into acronyms (GMC/GSMC/BJMC/IGMC/PMC = medical; GDC = dental), so
-# we match those acronym suffixes plus the spelled-out words. A name hitting both
-# (or neither) is flagged "REVIEW" for manual check rather than guessed.
-_MED_RE = re.compile(r"MEDICAL|\bMED\b|[A-Z]MC\b|\bMC\b|IMS|\bMH\b")
-_DEN_RE = re.compile(r"DENTAL|[A-Z]DC\b|\bDC\b")
-
-
-def program_from_name(name: str) -> str:
-    u = name.upper()
-    med = bool(_MED_RE.search(u))
-    den = bool(_DEN_RE.search(u))
-    if med and den:
-        return "REVIEW"   # ambiguous — manual review
-    if med:
-        return "MBBS"
-    if den:
-        return "BDS"
-    return "REVIEW"       # neither — manual review
-
 
 def classify_category(seg: str):
     """From the category segment, return (base_category, is_female, is_home_univ,

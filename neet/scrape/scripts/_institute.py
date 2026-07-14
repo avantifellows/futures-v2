@@ -57,3 +57,26 @@ def split_institute(raw: str):
             state = tail
     address = ", ".join(rest)
     return name, address, state
+
+
+# --- program (MBBS vs BDS) from the college name -------------------------------
+# Several state files don't label the degree per row, but the college name does
+# (Amogh's heuristic): a Medical college -> MBBS, a Dental college -> BDS. Indian
+# college names fuse the M/D into acronyms (GMC/GSMC/BJMC/GDC = medical/dental),
+# so match those acronym suffixes plus the spelled-out words. A name matching
+# both (or neither) returns "REVIEW" for manual check rather than a guess.
+_MED_RE = re.compile(r"MEDICAL|\bMED\b|[A-Z]MC\b|\bMC\b|IMS|\bMH\b")
+_DEN_RE = re.compile(r"DENTAL|[A-Z]DC\b|\bDC\b")
+
+
+def program_from_name(name: str) -> str:
+    u = (name or "").upper()
+    med = bool(_MED_RE.search(u))
+    den = bool(_DEN_RE.search(u))
+    if med and den:
+        return "REVIEW"
+    if med:
+        return "MBBS"
+    if den:
+        return "BDS"
+    return "REVIEW"
