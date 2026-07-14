@@ -13,10 +13,21 @@ Student row (10 cols):
 The SEAT category is inside 'Allotment Details', NOT the col-6 'Category' (which
 is the student's own social category). Allotment Details =
   '<collegeAbbr> - MBBS - <region:AU/SVU/APUR> - <allottedCategory> - <sub> --- <opt>'
-so token[3] after splitting the head on ' - ' is the allotted category.
+so token[3] after splitting the head on ' - ' is the VERTICAL (social) category
+and token[4] is the HORIZONTAL sub-reservation.
 
-Cutoff = MAX AIR per (college, allotted category, program). AP taxonomy:
-OC / BCA-E / SC1-3 / ST / EWS / MINORITY. rank_space = 'NEET AIR'.
+CRITICAL: token[4] is a distinct seat pool, not decoration. AP runs horizontal
+reservations — G (general/open sub-pool), PH (physically handicapped), CAP
+(children of armed personnel), NCC, PMC, Sports, etc. — each with its OWN, much
+deeper closing rank. Folding them into the bare vertical category and taking
+MAX makes e.g. Andhra Medical College OC close at 881,082 (a CAP seat) when the
+real OC-general cutoff is ~18,927. So we key the bucket on BOTH tokens: the
+vertical category AND the sub-pool, so "OC (G)" stays ~19k while "OC (PH)" /
+"OC (CAP)" are separate rows at their true (deep) ranks. Nothing is trimmed;
+every candidate lands in the correct pool.
+
+Cutoff = MAX AIR per (college, vertical category, sub-pool, program). AP
+vertical taxonomy: OC / BCA-E / SC1-3 / ST / EWS / MINORITY. rank_space = 'NEET AIR'.
 """
 from __future__ import annotations
 import argparse, csv, warnings
@@ -37,15 +48,29 @@ def clean(s):
     return (s or "").replace("\n", " ").strip()
 
 
+# The horizontal sub-reservation token that denotes the plain general/open pool
+# (no special reservation). We fold this into the bare vertical category so an
+# ordinary "OC" seat stays labeled "OC", while PH/CAP/NCC/… become "OC (PH)" etc.
+_GENERAL_SUB = {"G", "GEN", "GENERAL", "OP", "OPEN", ""}
+
+
 def parse_allotment(ad):
-    """Return (program, allotted_category) from the compound string, or (None,None)."""
+    """Return (program, category) from the compound string, or (None, None).
+
+    category = vertical category, plus the horizontal sub-reservation in parens
+    when it is a special pool (PH/CAP/NCC/…). The general sub-pool (G) is left
+    bare so "OC (G)" is just "OC".
+    """
     head = ad.split("---")[0].strip()
     toks = [x.strip() for x in head.split(" - ")]
     if len(toks) < 4:
         return None, None
     program = toks[1].upper()
     program = "BDS" if program.startswith("BDS") else "MBBS" if "MBBS" in program else program
-    return program, toks[3]
+    vertical = toks[3]
+    sub = toks[4] if len(toks) > 4 else ""
+    category = vertical if sub.upper() in _GENERAL_SUB else f"{vertical} ({sub})"
+    return program, category
 
 
 def parse(src: Path):

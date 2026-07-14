@@ -27,10 +27,15 @@ DEFAULT_OUT = ROOT / "extracted_data" / "neet_himachal_2025_r3_cutoffs.csv"
 # normalise wrap-broken labels -> clean canonical values
 # Keys are matched after removing ALL whitespace (PDF wrapping breaks words
 # mid-token, e.g. "Economic aly", "Manageme nt"), so match on the despaced form.
+# NOTE: 'nri' is deliberately absent — NRI is a seat QUOTA (it appears in the
+# Admission Type column as "NRI Quota"), not a social category. An NRI row's
+# allocated-category cell just repeats "NRI"; we neutralize it to General below
+# so it doesn't pollute the category facet with a fake "NRI category".
 CATEGORY_FIX = {
     "economicalyweakersections": "EWS",
     "economicallyweakersections": "EWS",
-    "general": "General", "obc": "OBC", "sc": "SC", "st": "ST", "nri": "NRI",
+    "general": "General", "obc": "OBC", "sc": "SC", "st": "ST",
+    "nri": "General",
     "childrenofjandkmigrants": "J&K Migrant",
     "singlegirlchild": "Single Girl Child",
 }

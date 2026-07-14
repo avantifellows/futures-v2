@@ -18,20 +18,43 @@ from __future__ import annotations
 import re
 
 
-def split_institute(raw: str):
-    """Return (name, address, state) from a raw institute string.
+# A trailing address segment that is a pincode, optionally followed by a
+# parenthetical seat annotation, e.g. "110095", "110095 (Female Seat only )".
+# Group 2 captures the annotation text (without the parens) when present.
+_PIN_TAIL_RE = re.compile(r"^\d{5,6}\s*(?:\(([^)]*)\))?\s*$")
+_WS_RE = re.compile(r"\s+")
 
-    Format seen in MCC/AIQ: 'Name, City,ADDRESS BLOB, State, pincode'.
+
+def _norm_ws(s: str) -> str:
+    """Collapse internal whitespace runs to one space. PDFs line-wrap inside
+    tokens (``CIV IL``→``CIVIL`` is a *different* problem, handled by the caller
+    normalizing names), but at least fold the multi-space artifacts so keys and
+    display text are stable."""
+    return _WS_RE.sub(" ", (s or "")).strip()
+
+
+def split_institute(raw: str):
+    """Return (name, address, state, note) from a raw institute string.
+
+    Format seen in MCC/AIQ: 'Name, City,ADDRESS BLOB, State, pincode[(note)]'.
     - name    = college name (+ city when the 2nd segment is clearly a city)
     - address = everything else, joined back with ", " (preserved, not dropped)
     - state   = best-effort from the trailing ', State, pincode'
+    - note    = a seat annotation that rode along on the pincode segment, e.g.
+                'Female Seat only' (kept as its own field, never dumped in State)
+
+    The trailing segment is often ``<pincode>`` OR ``<pincode> (Female Seat
+    only)``. The old logic only recognised a *bare* pincode, so the annotated
+    form fell through and the whole ``110095 (Female Seat only)`` string became
+    the State. We now strip a pincode-with-optional-note tail robustly and take
+    the segment before it as the State.
     """
-    raw = (raw or "").strip()
+    raw = _norm_ws(raw or "").strip()
     # 'Name,,ADDRESS' — empty city slot means the address starts immediately.
     had_empty_city = ",," in raw.replace(", ,", ",,")
     parts = [p.strip() for p in raw.split(",") if p.strip() != ""]
     if len(parts) <= 1:
-        return raw, "", ""
+        return raw, "", "", ""
 
     name = parts[0]
     city = parts[1] if len(parts) >= 2 else ""
@@ -48,15 +71,20 @@ def split_institute(raw: str):
     else:
         rest = parts[1:]
 
+    note = ""
     state = ""
     if rest:
         tail = rest[-1]
-        if re.fullmatch(r"\d{5,6}", tail) and len(rest) >= 2:
-            state = rest[-2]
-        elif not re.fullmatch(r"\d{5,6}", tail):
+        m = _PIN_TAIL_RE.match(tail)
+        if m:  # tail is a pincode (bare or with a (note)) -> state is the prior seg
+            if m.group(1):
+                note = _norm_ws(m.group(1))
+            if len(rest) >= 2:
+                state = rest[-2]
+        else:
             state = tail
     address = ", ".join(rest)
-    return name, address, state
+    return name, address, state, note
 
 
 # --- program (MBBS vs BDS) from the college name -------------------------------

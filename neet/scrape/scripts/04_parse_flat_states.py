@@ -37,9 +37,20 @@ CONFIGS = {
 # Category values that are NOT a real state category — they mark All-India-Quota
 # seats surrendered into state counselling. AIQ is covered comprehensively by the
 # national file (01_parse_aiq.py), so we drop these from the STATE dataset to keep
-# the state category list clean. (NRI, management etc. ARE real seat categories —
-# keep them.)
+# the state category list clean.
 NON_STATE_CATEGORIES = {"AIQ", "ALL INDIA", "ALL INDIA QUOTA"}
+
+# Tokens that are a seat QUOTA, not a social category. When one of these lands in
+# the category column (some state PDFs put the allotted-quota there), route it to
+# the Seat Type and blank the social category — it is an open-to-all pay/quota
+# seat, not a reservation. NRI/management ranks running to ~1M are expected for
+# these pools and must NOT sit in the category facet (they polluted the per-state
+# category dropdown and read as a fake "NRI category").
+QUOTA_AS_CATEGORY = {
+    "NRI": "NRI Quota",
+    "MGMT": "Management Quota", "MANAGEMENT": "Management Quota",
+    "MGT": "Management Quota", "PAID": "Management Quota",
+}
 
 
 def clean(s):
@@ -78,6 +89,11 @@ def parse_state(state, src: Path, out: Path):
                     if cat.upper() in NON_STATE_CATEGORIES:
                         skip += 1  # AIQ seat — covered by the national file
                         continue
+                    # A quota marker in the category column is a seat TYPE, not a
+                    # social category: move it to quota, neutralize the category.
+                    if cat.upper() in QUOTA_AS_CATEGORY:
+                        quota = QUOTA_AS_CATEGORY[cat.upper()]
+                        cat = "Open"
                     n += 1
                     key = (inst, cat, prog, quota)
                     buckets[key] = max(buckets.get(key, 0), int(air))

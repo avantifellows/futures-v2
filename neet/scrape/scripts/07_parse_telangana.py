@@ -11,13 +11,20 @@ Space-aligned TEXT report (no ruled table). Structure:
 
 We carry the current college forward from each "COLL ::" header. RANK is the NEET
 All India Rank. The trailing ALLOT-CODE encodes the SEAT:
-  <category>-<GEN|FEM>-[MSM-]P<phase>
+  <category>-<GEN|FEM>-[<sub-pool>-...]-P<phase>
     category : OPEN / BCA..BCE / SC / SC2 / SC3 / ST / MIN ...
     GEN|FEM  : general vs female-reserved seat  (the (W) equivalent)
-    MSM      : Muslim-minority sub-pool
+    sub-pool : OPTIONAL horizontal reservations — PHO (physically handicapped),
+               CAP (children of armed personnel), MSM (Muslim-minority), NCC, ...
     P1/P2/P3 : counselling phase
 
-Cutoff = MAX AIR per (college, category, is_female). rank_space = 'NEET AIR'.
+CRITICAL: the sub-pool is a DISTINCT seat pool with its own (much deeper) cutoff.
+Folding it into the bare category and taking MAX makes Osmania OPEN close at
+439,096 (a PHO seat) when the real OPEN-general mop-up cutoff is ~20,152. So we
+keep the sub-pool in the category: "OPEN" stays the general pool, "OPEN (PHO)" /
+"OPEN (CAP)" are separate rows at their true ranks. Nothing is trimmed.
+
+Cutoff = MAX AIR per (college, category+sub-pool, is_female). rank_space = 'NEET AIR'.
 """
 from __future__ import annotations
 import argparse, csv, re, warnings
@@ -32,10 +39,12 @@ DEFAULT_OUT = ROOT / "extracted_data" / "neet_telangana_2025_cutoffs.csv"
 
 COLL_RE = re.compile(r"COLL\s*::\s*(\S+)\s*-\s*(.+)$")
 DATA_RE = re.compile(r"^(\d+)\s+(\d{10})\s+(.*)$")
-# trailing allotment code: CATEGORY-(GEN|FEM)[-<sub-pools>...]-P<n>
-# The sub-pool segments between GEN/FEM and the phase vary (MSM, CAP, MRC, ...);
-# we only need the leading category and the GEN/FEM split, so allow any middle.
-ALLOT_RE = re.compile(r"([A-Z0-9]+)-(GEN|FEM)(?:-[A-Z]+)*-P(\d+)\s*$")
+# trailing allotment code: CATEGORY-(GEN|FEM)[-<sub-pool>...]-P<n>
+# Capture the leading category, the GEN/FEM split, AND the optional sub-pool
+# segment(s) in between (PHO/CAP/MSM/NCC/...). The sub-pool must stay in the
+# bucket key — collapsing it inflates the base category to the sub-pool's deep
+# rank (Osmania OPEN 439k from a PHO seat).
+ALLOT_RE = re.compile(r"([A-Z0-9]+)-(GEN|FEM)((?:-[A-Z]+)*)-P(\d+)\s*$")
 
 
 def parse(src: Path):
@@ -58,10 +67,16 @@ def parse(src: Path):
                 if not am or not current:
                     skip += 1
                     continue
-                category = am.group(1)                 # OPEN / BCB / SC2 / ST / MIN
+                base = am.group(1)                     # OPEN / BCB / SC2 / ST / MIN
                 is_female = am.group(2) == "FEM"
+                sub = am.group(3).strip("-")           # PHO / CAP / MSM / '' (general)
+                category = f"{base} ({sub})" if sub else base
                 code, name = current
+                # Key on the KNRUHS college CODE (unique) so distinct colleges that
+                # share a bare display name (e.g. several "GOVT MEDICAL COLLEGE")
+                # never merge into one bucket.
                 key = (code, name, category, is_female)
+                n += 1
                 if air > buckets.get(key, 0):
                     buckets[key] = air
     return buckets, n, skip
@@ -77,11 +92,15 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Institute", "Institute Code", "Category", "Is Female Seat",
-                    "Academic Program Name", "Seat Type", "Round",
-                    "Closing Rank", "rank_space"])
+        # Emit an explicit State column so the assembler trusts this clean name
+        # and does NOT run split_institute on it — that heuristic strips 3-word
+        # city segments ("... BHADRADRI KOTHAGUDEM") and collapses ~30 distinct
+        # "GOVT MEDICAL COLLEGE, <city>" into one bare "GOVT MEDICAL COLLEGE".
+        w.writerow(["Institute", "State", "Institute Code", "Category",
+                    "Is Female Seat", "Academic Program Name", "Seat Type",
+                    "Round", "Closing Rank", "rank_space"])
         for (code, name, cat, female), air in sorted(buckets.items(), key=lambda x: x[1]):
-            w.writerow([name, code, cat, "Yes" if female else "No",
+            w.writerow([name, "Telangana", code, cat, "Yes" if female else "No",
                         "MBBS", "State Quota", "MopUp", air, "NEET AIR"])
     print(f"wrote {args.out}: {len(buckets)} buckets ({skip} rows skipped)")
     print("  colleges:", len({(c, nm) for c, nm, *_ in buckets}))
