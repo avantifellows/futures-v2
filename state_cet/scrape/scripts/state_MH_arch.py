@@ -64,8 +64,13 @@ ALLOT_PATTERN = re.compile(
     r"(.+?)\s+"                               # Name
     r"([MF])\s+"                              # Gender
     r"([A-Z][A-Z/$#0-9-]*)\s+"                # Category (raw cat, may have $/#/SC/OBC/SBC/OBC$)
-    r"[*@~^&]\s*"                             # color marker (^/~/*/@ etc.)
-    r"([A-Z]{4,12})\s*$"                      # SeatType (e.g., LOPENH, GOBCH)
+    r"[*@~^&]?\s*"                            # color marker — OPTIONAL: Round 1
+                                              # has none (nothing to carry
+                                              # forward yet), and a small share
+                                              # of later rounds also lack it.
+    r"([A-Z0-9]{2,12})\s*$"                   # SeatType — {2,} admits short
+                                              # codes (AI, SC, ST, EWS); 0-9
+                                              # admits GNT1H/GNT2H/GNT3H.
 )
 
 
