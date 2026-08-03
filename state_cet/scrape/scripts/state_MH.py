@@ -128,6 +128,7 @@ SKIP_PREFIXES = (
     "Cut Off List for",
     "Cut Off Merit for",
     "and Technology",
+    "Degree Courses",          # "...(Integrated 5 Years) for the Year 2025-26"
     "Master of Engineering",
     "B .Pharmacy", "B .Pharmacy ", "B.Pharmacy", "Pharm.D",
     "Year 2025-26",
@@ -145,8 +146,8 @@ CATEGORY_TOKEN_RE = re.compile(
     r"^(?:"
     r"[GL](?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC|MI|MIN)[HOS]"
     r"|EWS|TFWS|ORPHAN|MI|MINO"
-    r"|DEF(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]"
-    r"|PWD(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]"
+    r"|DEF(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]?"
+    r"|PWD(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]?"
     r"|EMOBC[HOS]?|EMSEBC[HOS]?"
     r"|MIO?|MIH?"
     r")$"
@@ -264,8 +265,12 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
         if not (cat_columns and college_code and branch_code and quota_section):
             continue
 
-        # Skip percentile lines (parenthesised)
-        if "(" in ln and ")" in ln:
+        # Mask only the parenthesised percentage spans, preserving column
+        # offsets for _match_column, then skip the line only if nothing
+        # numeric survives. (Blanket paren-skip discarded whole real rows
+        # when pdftotext stranded one percentage on a line of real ranks.)
+        ln = re.sub(r"\([\d.]+\)", lambda mm: " " * len(mm.group()), ln)
+        if not re.search(r"\d{2,7}", ln):
             continue
 
         # Parse stage label at left of line (informational only)
@@ -330,9 +335,9 @@ ALLOT_PATTERN_FLAT = re.compile(
     r"(\d{1,7})\s*\(([\d.]+)\)\s+"
     r"(\d{10}[A-Z]?)\s+"
     r"(\d{5})\s*-\s*(.+?)\s{2,}"
-    r"(.+?)\s{2,}"
-    r"(MH to AI|AI to AI|MI to AI)\s+"
-    r"([A-Z]{1,12})\s*$"
+    r"(.+?)"
+    r"(?:\s{2,}(MH to AI|AI to AI|MI to AI)\s+([A-Z0-9]{1,12}))?"
+    r"\s*$"
 )
 
 # Pharmacy/B.Design-format AI rows split across 2+ lines:
@@ -342,9 +347,9 @@ ALLOT_PATTERN_RANKROW = re.compile(
     r"^\s*(\d{1,5})\s+"
     r"(\d{1,7})\s*\(([\d.]+)\)\s+"
     r"(\d{10}[A-Z]?)\s+.*?"
-    r"(JEE|NEET|MHT-?CET|CET)\s+"
-    r"(MH to AI|AI to AI|MI to AI)\s+"
-    r"([A-Z]{1,12})\s*$"
+    r"(JEE|NEET|MHT-?CET|CET)"
+    r"(?:\s+(MH to AI|AI to AI|MI to AI)\s+([A-Z0-9]{1,12}))?"
+    r"\s*$"
 )
 ALLOT_PATTERN_INSTROW = re.compile(
     r"^\s*(\d{5})\s*-\s*(.+?)\s{2,}([A-Z][\w \-./()&,]+?)\s*$"
@@ -419,16 +424,21 @@ def normalise_category(mh_cat: str) -> tuple[str, str, str]:
         return ("OTHER", "All", "TFWS")
     if c == "ORPHAN":
         return ("OTHER", "All", "ORPHAN")
-    if c.startswith("DEFR"):
-        return ("OTHER", "All", "DEFR")
-    if c.startswith("DEF"):
-        return ("OTHER", "All", "DEF")
-    if c.startswith("PWD"):
+    # PWD (disability) and DEF (defence) are HORIZONTAL reservations: a
+    # PWDROBC seat is an OBC seat carrying a disability flag, not a category of
+    # its own. Decode the base category for both so DEF and PWD are treated
+    # alike (DEF previously short-circuited to OTHER without decoding, so
+    # DEFROBCS landed in OTHER while PWDROBC landed in OBC-NCL), and keep the
+    # flag in sub_pool. Stage 2c excludes every row with a non-empty sub_pool
+    # from the canonical 5-cat view, so these never dilute the base categories.
+    if c.startswith(("DEF", "PWD")):
+        flag = c[:3]
         body = c[3:]
         if body.startswith("R"):
             body = body[1:]
+            flag += "R"
         cat, _, _ = _decode_body(body)
-        return (cat, "All", "PWD")
+        return (cat, "All", flag)
     if c == "EWS":
         return ("EWS", "All", "")
     if c in ("MI", "MINO", "MIH", "MIO", "MIS"):
@@ -438,7 +448,18 @@ def normalise_category(mh_cat: str) -> tuple[str, str, str]:
     if c.startswith("EMSEBC"):
         return ("OTHER", "All", "EMSEBC")
     if c[0] in ("G", "L"):
-        gender = "Boys" if c[0] == "G" else "Girls"
+        # The legend printed on every CET Cell cutoff page reads:
+        #   "Starting character G-General, L-Ladies, End character H-Home
+        #    University, O-Other than Home University, S-State Level,
+        #    AI-All India Seat."
+        #
+        # So G is the GENDER-NEUTRAL pool — open to every candidate, women
+        # included — not a boys-only pool. Maharashtra's 30% female quota is
+        # horizontal: L* seats are reserved for women *in addition to* their
+        # access to the G* pool. Calling G "Boys" made every gender-neutral
+        # seat look male-only, hiding most of the seat pool from female
+        # candidates in anything built on this column.
+        gender = "All" if c[0] == "G" else "Girls"
         body = c[1:]
         cat, _, _ = _decode_body(body)
         return (cat, gender, "")
@@ -524,20 +545,45 @@ def run_stream(stream: str):
     print(f"  TOTAL all-stages: {len(df):,}")
 
     print("\nStage 2 — aggregating MAX-rank closing ranks across rounds × stages")
-    agg = (df.groupby(
-        ["college_code", "college_name", "branch_code", "branch_name",
-         "status", "quota_section", "category_raw"], dropna=False)
+    # Classify college_type from the RAW per-row status BEFORE aggregating, and
+    # group on college_type rather than the free-text college_name/branch_name/
+    # status. pdftotext merges stray page-header text onto some college-code
+    # header lines, so the SAME real institute yields several status/name
+    # strings; including them in the key split one institute into multiple rows,
+    # each aggregating only part of its data -> duplicate rows with different,
+    # both-undercounted closing ranks. college_type is kept in the key because
+    # a few institutes genuinely run both Aided and Un-Aided seats under one
+    # code (e.g. 03016 Bombay College of Pharmacy) and must stay separate.
+    df["college_type"] = df["status"].apply(classify_college_type)
+
+    GROUP_KEYS = ["college_code", "branch_code", "quota_section",
+                  "category_raw", "college_type"]
+
+    agg = (df.groupby(GROUP_KEYS, dropna=False)
         .agg(closing_rank=("rank", "max"),
              opening_rank=("rank", "min"),
              num_rank_observations=("rank", "count"))
         .reset_index())
+
+    def _canonical(frame, keys, value_col):
+        """Pick the shortest (least boilerplate-contaminated) text per group."""
+        return (frame.assign(_len=frame[value_col].fillna("").str.len())
+                     .sort_values("_len")
+                     .drop_duplicates(keys)[keys + [value_col]])
+
+    agg = agg.merge(_canonical(df, ["college_code"], "college_name"),
+                    on="college_code", how="left")
+    agg = agg.merge(_canonical(df, ["college_code", "branch_code"], "branch_name"),
+                    on=["college_code", "branch_code"], how="left")
+    agg = agg.merge(_canonical(df, ["college_code", "branch_code", "college_type"], "status"),
+                    on=["college_code", "branch_code", "college_type"], how="left")
+
     last = (df.sort_values("rank", ascending=False)
-              .drop_duplicates(["college_code", "branch_code", "quota_section", "category_raw"])
-              [["college_code", "branch_code", "quota_section", "category_raw",
-                "round", "stage"]]
+              .drop_duplicates(GROUP_KEYS)
+              [GROUP_KEYS + ["round", "stage"]]
               .rename(columns={"round": "last_round_with_max",
                                "stage": "last_stage_with_max"}))
-    agg = agg.merge(last, on=["college_code", "branch_code", "quota_section", "category_raw"])
+    agg = agg.merge(last, on=GROUP_KEYS)
 
     cat_norm = agg["category_raw"].apply(lambda c: pd.Series(normalise_category(c)))
     cat_norm.columns = ["category", "gender", "sub_pool"]
@@ -552,7 +598,6 @@ def run_stream(stream: str):
     agg["quota"] = agg["quota_section"]
     agg["rank_basis"] = f"{cfg['cet_name']} State Merit Rank"
     agg["source_url"] = cfg["source_url"]
-    agg["college_type"] = agg["status"].apply(classify_college_type)
 
     cols_out = [
         "state", "cet_name", "stream", "year", "round",
