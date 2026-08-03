@@ -36,7 +36,11 @@ INSTITUTE_LIST = ROOT / "source" / "MH" / "architecture" / "arch_institutes.tsv"
 OUT = ROOT / "extracted_data"
 STATE_CODE = "MH"
 YEAR = 2025
-CET_NAME = "MAH-AAC-CET / NATA"
+# B.Arch admission does NOT go through MHT-CET or MAH-AAC-CET (that one is
+# Fine Art). Candidates qualify via NATA or JEE Main Paper 2, and the CAP
+# merit score is NATA/2 + Class XII aggregate %, out of 200 — which is why
+# this stream carries merit SCORES as well as merit numbers.
+CET_NAME = "NATA / JEE Main Paper 2"
 SOURCE_URL = "https://arch2025.mahacet.org.in/"
 STREAM = "architecture"
 OUT_PREFIX = "arch"
@@ -274,7 +278,7 @@ def main():
     agg["year"] = YEAR
     agg["round"] = "R1+R2+R3+R4 (cumulative)"
     agg["quota"] = agg["quota_section"]
-    agg["rank_basis"] = "MH AAC-CET / NATA State Merit Rank"
+    agg["rank_basis"] = "MH B.Arch CAP Merit No (NATA/2 + XII%, max 200)"
     agg["source_url"] = SOURCE_URL
     agg["college_type"] = agg["status"].apply(classify_college_type)
 
@@ -319,7 +323,7 @@ def main():
              last_round_with_max=("last_round_with_max",
                                    lambda s: s.value_counts().index[0]))
         .reset_index())
-    canon["rank_basis"] = "MH AAC-CET / NATA State Merit Rank"
+    canon["rank_basis"] = "MH B.Arch CAP Merit No (NATA/2 + XII%, max 200)"
     canon["source_url"] = SOURCE_URL
     canon.to_csv(
         OUT / f"{STATE_CODE}_{OUT_PREFIX}_consolidated_5cat_govt_{YEAR}.csv", index=False
