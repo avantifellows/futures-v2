@@ -163,6 +163,29 @@ class TestPageHeaderIsNotData(unittest.TestCase):
                          "digits survive the mask — the prefix guard is load-bearing")
 
 
+class TestExamAttribution(unittest.TestCase):
+    """Each stream must name the exam it is actually admitted on.
+
+    Only engineering and pharmacy go through MHT-CET. B.Arch candidates qualify
+    via NATA or JEE Main Paper 2 and are ranked on NATA/2 + Class XII% (max
+    200); B.Design has its own MAH-B.Design CET. MAH-AAC-CET is the Fine Art
+    exam and belongs to neither — labelling these streams with it was wrong and
+    would invite cross-stream rank comparisons that mean nothing.
+    """
+
+    def test_arch_is_not_attributed_to_a_cet_it_does_not_use(self):
+        self.assertNotIn("AAC", mh_arch.CET_NAME)
+        self.assertNotIn("MHT-CET", mh_arch.CET_NAME)
+        self.assertIn("NATA", mh_arch.CET_NAME)
+
+    def test_mhtcet_streams_are_labelled_mhtcet(self):
+        for stream in ("engineering", "pharmacy"):
+            self.assertEqual(mh.STREAM_CONFIG[stream]["cet_name"], "MHT-CET", stream)
+
+    def test_bdesign_has_its_own_cet(self):
+        self.assertEqual(mh.STREAM_CONFIG["bdesign"]["cet_name"], "MAH-B.Design CET")
+
+
 class TestArchCategorySemantics(unittest.TestCase):
     """state_MH_arch.py keeps its OWN copy of the category decoder.
 

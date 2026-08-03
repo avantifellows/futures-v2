@@ -96,7 +96,7 @@ STREAM_CONFIG = {
         out_prefix="pharm",
     ),
     "bdesign": dict(
-        cet_name="MAH-AAC-CET",                         # B.Design uses MAH-AAC-CET
+        cet_name="MAH-B.Design CET",                    # its own CET; MAH-AAC-CET is Fine Art
         source_url="https://bdesigncap2025.mahacet.org/",
         subdir="bdesign",
         state_files=[
