@@ -163,6 +163,36 @@ class TestPageHeaderIsNotData(unittest.TestCase):
                          "digits survive the mask — the prefix guard is load-bearing")
 
 
+class TestArchCategorySemantics(unittest.TestCase):
+    """state_MH_arch.py keeps its OWN copy of the category decoder.
+
+    That duplication is why the G-means-General and DEF-decodes-its-base fixes
+    had to be applied twice; these assertions keep the two copies honest. The
+    downstream build_clean.py rejects a 'Boys' gender value outright, which is
+    how the missed second copy surfaced.
+    """
+
+    def test_g_is_gender_neutral(self):
+        for code in ("GOPENH", "GOPENO", "GOBCH", "GNT1H"):
+            self.assertEqual(mh_arch.normalise_seat_type(code)[1], "All", code)
+
+    def test_l_is_female_reserved(self):
+        for code in ("LOPENH", "LOPENO", "LOBCH"):
+            self.assertEqual(mh_arch.normalise_seat_type(code)[1], "Girls", code)
+
+    def test_def_and_pwd_decode_base_category(self):
+        self.assertEqual(mh_arch.normalise_seat_type("DEFROBCS")[0], "OBC-NCL")
+        self.assertEqual(mh_arch.normalise_seat_type("PWDROBC")[0], "OBC-NCL")
+
+    def test_matches_the_engineering_decoder(self):
+        """The two copies must not drift apart."""
+        for code in ("GOPENH", "LOPENH", "GOBCH", "EWS", "TFWS", "ORPHAN",
+                     "MI", "DEFROBCS", "PWDROBC", "GNT1H", "GSEBCH"):
+            self.assertEqual(mh_arch.normalise_seat_type(code),
+                             mh.normalise_category(code),
+                             f"{code}: arch and engg decoders disagree")
+
+
 class TestArchAllotPattern(unittest.TestCase):
     """Round 1 has no carry-forward colour marker, and seat types can be short.
 

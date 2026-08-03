@@ -170,17 +170,25 @@ def normalise_seat_type(seat_type: str) -> tuple[str, str, str]:
     c = seat_type.upper()
     if c == "TFWS":  return ("OTHER", "All", "TFWS")
     if c == "ORPHAN":return ("OTHER", "All", "ORPHAN")
-    if c.startswith("DEFR"): return ("OTHER", "All", "DEFR")
-    if c.startswith("DEF"):  return ("OTHER", "All", "DEF")
-    if c.startswith("PWD"):
+    # PWD/DEF are horizontal flags over a base category — decode the base for
+    # both and keep the flag in sub_pool. (Kept in step with
+    # state_MH.normalise_category; DEF used to skip the decode, so DEFROBCS
+    # landed in OTHER while PWDROBC landed in OBC-NCL.)
+    if c.startswith(("DEF", "PWD")):
+        flag = c[:3]
         body = c[3:]
-        if body.startswith("R"): body = body[1:]
+        if body.startswith("R"):
+            body = body[1:]
+            flag += "R"
         cat, _, _ = _decode_body(body)
-        return (cat, "All", "PWD")
+        return (cat, "All", flag)
     if c == "EWS":  return ("EWS", "All", "")
     if c in ("MI", "MINO", "MIH", "MIO", "MIS"): return ("OTHER", "All", "MIN")
     if c[0] in ("G", "L"):
-        gender = "Boys" if c[0] == "G" else "Girls"
+        # G is General (gender-NEUTRAL, women included), L is Ladies — per the
+        # legend printed on the CET Cell cutoff pages. Female reservation here
+        # is horizontal, so G must not be labelled "Boys".
+        gender = "All" if c[0] == "G" else "Girls"
         body = c[1:]
         cat, _, _ = _decode_body(body)
         return (cat, gender, "")
