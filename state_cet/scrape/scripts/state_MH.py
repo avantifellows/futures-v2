@@ -191,6 +191,7 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
     college_code = college_name = None
     branch_code = branch_name = None
     status = None
+    home_university = None
     quota_section = None
     cat_columns: list[tuple[str, int, int]] = []
     prev_cat_line: list[tuple[str, int, int]] = []  # categories on prior non-empty line
@@ -223,9 +224,12 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
             prev_cat_line = []
             continue
 
-        m = re.match(r"^Status:\s*(.+)$", stripped)
+        # Status line sometimes carries a second clause on the same line:
+        # "Status: Government-Aided ... Home University : Mumbai University"
+        m = re.match(r"^Status:\s*(.+?)(?:\s*Home University\s*:\s*(.+))?$", stripped)
         if m:
             status = m.group(1).strip()
+            home_university = m.group(2).strip() if m.group(2) else None
             cat_columns = []
             prev_cat_line = []
             continue
@@ -300,6 +304,7 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
                 "branch_code": branch_code,
                 "branch_name": branch_name,
                 "status": status,
+                "home_university": home_university,
                 "quota_section": quota_section,
                 "category_raw": cat,
                 "rank": val,
@@ -492,6 +497,19 @@ def classify_college_type(status: str | None) -> str:
 GOVT_TYPES = {"Govt", "Govt-Aided", "State-Univ-Dept"}
 
 
+def _canonical_prefer_nonblank(frame: pd.DataFrame, keys: list[str], value_col: str) -> pd.DataFrame:
+    """Reduce `frame` to one `value_col` per `keys`, preferring a non-blank value.
+
+    home_university is genuinely blank in some rounds' PDFs and genuinely
+    populated in others for the same college — "" is always shortest under a
+    naive canonicalizer, so blank must not be allowed to beat a real value.
+    """
+    vals = frame[value_col].fillna("")
+    return (frame.assign(_blank=(vals == ""), _len=vals.str.len())
+                 .sort_values(["_blank", "_len"])
+                 .drop_duplicates(keys)[keys + [value_col]])
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Per-stream pipeline
 # ───────────────────────────────────────────────────────────────────────────
@@ -539,6 +557,15 @@ def run_stream(stream: str):
                                "stage": "last_stage_with_max"}))
     agg = agg.merge(last, on=["college_code", "branch_code", "quota_section", "category_raw"])
 
+    # home_university is NOT part of the closing-rank grain above (it would
+    # fragment groups whenever a round's PDF happened to omit the clause) —
+    # canonicalize to one value per college_code, preferring non-blank, and
+    # merge it in afterwards instead.
+    agg = agg.merge(
+        _canonical_prefer_nonblank(df, ["college_code"], "home_university"),
+        on="college_code", how="left",
+    )
+
     cat_norm = agg["category_raw"].apply(lambda c: pd.Series(normalise_category(c)))
     cat_norm.columns = ["category", "gender", "sub_pool"]
     agg = pd.concat([agg, cat_norm], axis=1)
@@ -557,6 +584,7 @@ def run_stream(stream: str):
     cols_out = [
         "state", "cet_name", "stream", "year", "round",
         "college_code", "college_name", "college_type", "status",
+        "home_university",
         "branch_code", "branch_name",
         "quota", "category_raw", "category", "gender", "sub_pool",
         "opening_rank", "closing_rank", "num_rank_observations",
@@ -591,7 +619,7 @@ def run_stream(stream: str):
     if not sl.empty:
         sl_pivot = sl.pivot_table(
             index=["college_code", "college_name", "college_type",
-                   "branch_code", "branch_name"],
+                   "home_university", "branch_code", "branch_name"],
             columns="category_raw",
             values="closing_rank",
             aggfunc="first",
@@ -599,7 +627,7 @@ def run_stream(stream: str):
         cat_cols_present = [c for c in headline_cats if c in sl_pivot.columns]
         sl_pivot = sl_pivot[
             ["college_code", "college_name", "college_type",
-             "branch_code", "branch_name"] + cat_cols_present
+             "home_university", "branch_code", "branch_name"] + cat_cols_present
         ]
         sl_pivot.to_csv(
             OUT / f"{STATE_CODE}_{prefix}_state_quota_closing_ranks_govt_pivot_StateLevel_{YEAR}.csv",
@@ -617,7 +645,7 @@ def run_stream(stream: str):
     ].copy()
     canon = (canon.groupby(
         ["state", "cet_name", "stream", "year", "round",
-         "college_code", "college_name", "college_type",
+         "college_code", "college_name", "college_type", "home_university",
          "branch_code", "branch_name",
          "quota", "category", "gender"], dropna=False)
         .agg(opening_rank=("opening_rank", "min"),
