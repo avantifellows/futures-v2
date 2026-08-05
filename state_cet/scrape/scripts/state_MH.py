@@ -145,8 +145,10 @@ CATEGORY_TOKEN_RE = re.compile(
     r"^(?:"
     r"[GL](?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC|MI|MIN)[HOS]"
     r"|EWS|TFWS|ORPHAN|MI|MINO"
-    r"|DEF(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]"
-    r"|PWD(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]"
+    # DEF/PWD trailing H/O/S is optional — line-wrap in the PDF sometimes
+    # drops it (e.g. "DEFRSEBC", "PWDROBC", "PWDRSEBC" with no suffix letter).
+    r"|DEF(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]?"
+    r"|PWD(?:R)?(?:OPEN|OBC|SC|ST|VJ|NT[1-3]|SEBC|SBC)[HOS]?"
     r"|EMOBC[HOS]?|EMSEBC[HOS]?"
     r"|MIO?|MIH?"
     r")$"
@@ -191,6 +193,7 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
     college_code = college_name = None
     branch_code = branch_name = None
     status = None
+    home_university = None
     quota_section = None
     cat_columns: list[tuple[str, int, int]] = []
     prev_cat_line: list[tuple[str, int, int]] = []  # categories on prior non-empty line
@@ -223,17 +226,33 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
             prev_cat_line = []
             continue
 
-        m = re.match(r"^Status:\s*(.+)$", stripped)
+        # Status line sometimes carries a second clause on the same line:
+        # "Status: Government-Aided ... Home University : Mumbai University"
+        m = re.match(r"^Status:\s*(.+?)(?:\s*Home University\s*:\s*(.+))?$", stripped)
         if m:
             status = m.group(1).strip()
+            home_university = m.group(2).strip() if m.group(2) else None
             cat_columns = []
             prev_cat_line = []
             continue
 
-        if stripped in QUOTA_SECTIONS:
-            quota_section = QUOTA_SECTIONS[stripped]
+        # Prefix match, not exact match — pdftotext -layout sometimes merges a
+        # stray percentile or (in pharmacy's compact layout) category codes
+        # onto the same line as the quota header, so `stripped in
+        # QUOTA_SECTIONS` fails silently and every row underneath gets
+        # mis-filed under the previous quota section.
+        matched_quota_key = None
+        for key in QUOTA_SECTIONS:
+            if stripped.startswith(key):
+                matched_quota_key = key
+                break
+        if matched_quota_key:
+            quota_section = QUOTA_SECTIONS[matched_quota_key]
+            leading_ws = len(ln) - len(ln.lstrip())
+            key_end_in_ln = leading_ws + len(matched_quota_key)
+            combined_cats = _scan_categories(ln, key_end_in_ln)
             cat_columns = []
-            prev_cat_line = []
+            prev_cat_line = combined_cats if combined_cats else []
             continue
 
         m = re.search(r"\bStage\b", ln)
@@ -248,6 +267,41 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
             else:
                 cat_columns = []
             prev_cat_line = []
+
+            # In pharmacy's compact layout, real rank numbers sometimes sit
+            # on the SAME line as the word "Stage" itself
+            # (e.g. "Stage  2285  3853  4234"), not on a separate row like
+            # engineering's wider tables. Recover them instead of discarding
+            # via the unconditional `continue` below (~1,747 such lines,
+            # ~1,005 in pharmacy CAP1 alone).
+            after_stage_masked = re.sub(
+                r"\([\d.]+\)", lambda mm: " " * len(mm.group()), ln[m.end():]
+            )
+            stage_line_tokens = [
+                (int(cm.group(0)), m.end() + cm.start(), m.end() + cm.end())
+                for cm in re.finditer(r"\b(\d{2,7})\b", after_stage_masked)
+            ]
+            if stage_line_tokens and cat_columns and college_code and branch_code and quota_section:
+                first_cat_col = min(cs for _, cs, _ in cat_columns)
+                for val, s, e in stage_line_tokens:
+                    if s + 2 < first_cat_col - 5:
+                        continue
+                    cat = _match_column(s, e, cat_columns)
+                    if cat is None:
+                        continue
+                    rows.append({
+                        "round": round_label,
+                        "stage": "?",
+                        "college_code": college_code,
+                        "college_name": college_name,
+                        "branch_code": branch_code,
+                        "branch_name": branch_name,
+                        "status": status,
+                        "home_university": home_university,
+                        "quota_section": quota_section,
+                        "category_raw": cat,
+                        "rank": val,
+                    })
             continue
 
         # Pre-scan: maybe THIS line is a category-header line for a future Stage
@@ -264,9 +318,10 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
         if not (cat_columns and college_code and branch_code and quota_section):
             continue
 
-        # Skip percentile lines (parenthesised)
-        if "(" in ln and ")" in ln:
-            continue
+        # Mask stray percentile spans like "(83.2450)" instead of dropping
+        # the whole row — real data rows can carry one stray percentage
+        # alongside genuine rank numbers.
+        ln = re.sub(r"\([\d.]+\)", lambda mm: " " * len(mm.group()), ln)
 
         # Parse stage label at left of line (informational only)
         stage_match = re.match(
@@ -300,6 +355,7 @@ def parse_state_quota_pdf(pdf_path: Path, round_label: str) -> list[dict]:
                 "branch_code": branch_code,
                 "branch_name": branch_name,
                 "status": status,
+                "home_university": home_university,
                 "quota_section": quota_section,
                 "category_raw": cat,
                 "rank": val,
@@ -330,9 +386,10 @@ ALLOT_PATTERN_FLAT = re.compile(
     r"(\d{1,7})\s*\(([\d.]+)\)\s+"
     r"(\d{10}[A-Z]?)\s+"
     r"(\d{5})\s*-\s*(.+?)\s{2,}"
-    r"(.+?)\s{2,}"
-    r"(MH to AI|AI to AI|MI to AI)\s+"
-    r"([A-Z]{1,12})\s*$"
+    r"(.+?)"
+    # The "MH to AI / seat-type" tail is mandatory in most rows but many
+    # real rows lack it entirely — make it optional so those rows still match.
+    r"(?:\s{2,}(MH to AI|AI to AI|MI to AI)\s+([A-Z]{1,12}))?\s*$"
 )
 
 # Pharmacy/B.Design-format AI rows split across 2+ lines:
@@ -342,9 +399,9 @@ ALLOT_PATTERN_RANKROW = re.compile(
     r"^\s*(\d{1,5})\s+"
     r"(\d{1,7})\s*\(([\d.]+)\)\s+"
     r"(\d{10}[A-Z]?)\s+.*?"
-    r"(JEE|NEET|MHT-?CET|CET)\s+"
-    r"(MH to AI|AI to AI|MI to AI)\s+"
-    r"([A-Z]{1,12})\s*$"
+    r"(JEE|NEET|MHT-?CET|CET)"
+    # Same optional-tail relaxation as ALLOT_PATTERN_FLAT.
+    r"(?:\s+(MH to AI|AI to AI|MI to AI)\s+([A-Z]{1,12}))?\s*$"
 )
 ALLOT_PATTERN_INSTROW = re.compile(
     r"^\s*(\d{5})\s*-\s*(.+?)\s{2,}([A-Z][\w \-./()&,]+?)\s*$"
@@ -492,6 +549,33 @@ def classify_college_type(status: str | None) -> str:
 GOVT_TYPES = {"Govt", "Govt-Aided", "State-Univ-Dept"}
 
 
+def _canonical(frame: pd.DataFrame, keys: list[str], value_col: str) -> pd.DataFrame:
+    """Reduce `frame` to one `value_col` per `keys`, picking the shortest string.
+
+    Safe for college_name / branch_name / status: pdftotext corruption (stray
+    boilerplate merged onto a line) only ever ADDS text, so the shortest
+    variant per key is the clean one.
+    """
+    return (frame.assign(_len=frame[value_col].fillna("").str.len())
+                 .sort_values("_len")
+                 .drop_duplicates(keys)[keys + [value_col]])
+
+
+def _canonical_prefer_nonblank(frame: pd.DataFrame, keys: list[str], value_col: str) -> pd.DataFrame:
+    """Reduce `frame` to one `value_col` per `keys`, preferring a non-blank value.
+
+    Unlike `_canonical` above (fine for college_name / branch_name / status,
+    where corruption only ever ADDS text), a field like home_university is
+    genuinely blank in some rounds' PDFs and genuinely populated in others
+    for the same college — "" is always shortest, so blank must not be
+    allowed to beat a real value.
+    """
+    vals = frame[value_col].fillna("")
+    return (frame.assign(_blank=(vals == ""), _len=vals.str.len())
+                 .sort_values(["_blank", "_len"])
+                 .drop_duplicates(keys)[keys + [value_col]])
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Per-stream pipeline
 # ───────────────────────────────────────────────────────────────────────────
@@ -524,20 +608,52 @@ def run_stream(stream: str):
     print(f"  TOTAL all-stages: {len(df):,}")
 
     print("\nStage 2 — aggregating MAX-rank closing ranks across rounds × stages")
+    # Grouping by raw college_name/branch_name/status let a corrupted
+    # PDF-extraction artifact (pdftotext merging stray boilerplate onto a
+    # college's name/status line in one round but not another) silently
+    # fragment one real institute into multiple rows, each computed from
+    # partial data — both wrong. Classify college_type from the RAW per-row
+    # status BEFORE aggregating, and group by college_type instead of raw
+    # status text: genuine dual-status institutes (e.g. Bombay College of
+    # Pharmacy, 03016 — runs both Government-Aided and Un-Aided seats under
+    # the same branch code) still get 2 separate rows, one per real type,
+    # while corrupted/clean text variants of the SAME type correctly merge
+    # into one.
+    df["college_type"] = df["status"].apply(classify_college_type)
+
     agg = (df.groupby(
-        ["college_code", "college_name", "branch_code", "branch_name",
-         "status", "quota_section", "category_raw"], dropna=False)
+        ["college_code", "branch_code", "quota_section", "category_raw",
+         "college_type"], dropna=False)
         .agg(closing_rank=("rank", "max"),
              opening_rank=("rank", "min"),
              num_rank_observations=("rank", "count"))
         .reset_index())
+
+    agg = agg.merge(_canonical(df, ["college_code"], "college_name"),
+                     on="college_code", how="left")
+    agg = agg.merge(_canonical(df, ["college_code", "branch_code"], "branch_name"),
+                     on=["college_code", "branch_code"], how="left")
+    agg = agg.merge(_canonical(df, ["college_code", "branch_code", "college_type"], "status"),
+                     on=["college_code", "branch_code", "college_type"], how="left")
+
     last = (df.sort_values("rank", ascending=False)
-              .drop_duplicates(["college_code", "branch_code", "quota_section", "category_raw"])
+              .drop_duplicates(["college_code", "branch_code", "quota_section",
+                                "category_raw", "college_type"])
               [["college_code", "branch_code", "quota_section", "category_raw",
-                "round", "stage"]]
+                "college_type", "round", "stage"]]
               .rename(columns={"round": "last_round_with_max",
                                "stage": "last_stage_with_max"}))
-    agg = agg.merge(last, on=["college_code", "branch_code", "quota_section", "category_raw"])
+    agg = agg.merge(last, on=["college_code", "branch_code", "quota_section",
+                              "category_raw", "college_type"])
+
+    # home_university is NOT part of the closing-rank grain above (it would
+    # fragment groups whenever a round's PDF happened to omit the clause) —
+    # canonicalize to one value per college_code, preferring non-blank, and
+    # merge it in afterwards instead.
+    agg = agg.merge(
+        _canonical_prefer_nonblank(df, ["college_code"], "home_university"),
+        on="college_code", how="left",
+    )
 
     cat_norm = agg["category_raw"].apply(lambda c: pd.Series(normalise_category(c)))
     cat_norm.columns = ["category", "gender", "sub_pool"]
@@ -552,11 +668,13 @@ def run_stream(stream: str):
     agg["quota"] = agg["quota_section"]
     agg["rank_basis"] = f"{cfg['cet_name']} State Merit Rank"
     agg["source_url"] = cfg["source_url"]
-    agg["college_type"] = agg["status"].apply(classify_college_type)
+    # college_type is already a column — it was a Stage 2 groupby key, not
+    # re-derived from (possibly corrupted) agg["status"] here.
 
     cols_out = [
         "state", "cet_name", "stream", "year", "round",
         "college_code", "college_name", "college_type", "status",
+        "home_university",
         "branch_code", "branch_name",
         "quota", "category_raw", "category", "gender", "sub_pool",
         "opening_rank", "closing_rank", "num_rank_observations",
@@ -591,7 +709,7 @@ def run_stream(stream: str):
     if not sl.empty:
         sl_pivot = sl.pivot_table(
             index=["college_code", "college_name", "college_type",
-                   "branch_code", "branch_name"],
+                   "home_university", "branch_code", "branch_name"],
             columns="category_raw",
             values="closing_rank",
             aggfunc="first",
@@ -599,7 +717,7 @@ def run_stream(stream: str):
         cat_cols_present = [c for c in headline_cats if c in sl_pivot.columns]
         sl_pivot = sl_pivot[
             ["college_code", "college_name", "college_type",
-             "branch_code", "branch_name"] + cat_cols_present
+             "home_university", "branch_code", "branch_name"] + cat_cols_present
         ]
         sl_pivot.to_csv(
             OUT / f"{STATE_CODE}_{prefix}_state_quota_closing_ranks_govt_pivot_StateLevel_{YEAR}.csv",
@@ -617,7 +735,7 @@ def run_stream(stream: str):
     ].copy()
     canon = (canon.groupby(
         ["state", "cet_name", "stream", "year", "round",
-         "college_code", "college_name", "college_type",
+         "college_code", "college_name", "college_type", "home_university",
          "branch_code", "branch_name",
          "quota", "category", "gender"], dropna=False)
         .agg(opening_rank=("opening_rank", "min"),

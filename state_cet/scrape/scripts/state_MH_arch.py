@@ -64,8 +64,8 @@ ALLOT_PATTERN = re.compile(
     r"(.+?)\s+"                               # Name
     r"([MF])\s+"                              # Gender
     r"([A-Z][A-Z/$#0-9-]*)\s+"                # Category (raw cat, may have $/#/SC/OBC/SBC/OBC$)
-    r"[*@~^&]\s*"                             # color marker (^/~/*/@ etc.)
-    r"([A-Z]{4,12})\s*$"                      # SeatType (e.g., LOPENH, GOBCH)
+    r"[*@~^&]?\s*"                            # color marker — optional (Round 1 legitimately has none)
+    r"([A-Z]{2,12})\s*$"                      # SeatType — min length relaxed (real codes like "AI", "EWS" are 2-3 chars)
 )
 
 
@@ -85,6 +85,7 @@ def parse_arch_pdf(pdf_path: Path, round_label: str) -> list[dict]:
     college_code = college_name = None
     branch_code = branch_name = None
     status = None
+    home_university = None
     quota_section = None
 
     for raw in text.splitlines():
@@ -120,18 +121,30 @@ def parse_arch_pdf(pdf_path: Path, round_label: str) -> list[dict]:
             continue
 
         # Status line: "Status: Government-Aided ... Home University: Mumbai University"
-        m = re.match(r"^Status:\s*([^\n]+?)(?:\s*Home University:.*)?$", stripped)
+        m = re.match(r"^Status:\s*([^\n]+?)(?:\s*Home University:\s*(.+))?$", stripped)
         if m:
             status = m.group(1).strip()
+            home_university = m.group(2).strip() if m.group(2) else None
             continue
 
         # Skip column header line (contains all of "SrNo", "MeritNo", "Merit Score", etc.)
         if all(k in stripped for k in ("SrNo", "MeritNo", "Merit Score", "SeatType")):
             continue
 
-        # Quota section header (string match)
-        if stripped in QUOTA_SECTIONS:
-            quota_section = QUOTA_SECTIONS[stripped]
+        # Quota section header — prefix match, longest key first. This file's
+        # QUOTA_SECTIONS has an "umbrella" key, "Home University Seats", which
+        # is a literal prefix of two longer, more specific keys — check
+        # longest keys first or the umbrella label wins wrongly. Also: the
+        # real "State Level" header text is "State Level Seats", which never
+        # equals the bare "State Level" key, so an exact match never fires
+        # for that bucket at all.
+        matched_quota_key = None
+        for key in sorted(QUOTA_SECTIONS, key=len, reverse=True):
+            if stripped.startswith(key):
+                matched_quota_key = key
+                break
+        if matched_quota_key:
+            quota_section = QUOTA_SECTIONS[matched_quota_key]
             continue
 
         # Allotment row
@@ -153,6 +166,7 @@ def parse_arch_pdf(pdf_path: Path, round_label: str) -> list[dict]:
                 "branch_code": branch_code,
                 "branch_name": branch_name,
                 "status": status,
+                "home_university": home_university,
                 "quota_section": quota_section,
             })
 
@@ -211,6 +225,33 @@ def classify_college_type(status: str | None) -> str:
 GOVT_TYPES = {"Govt", "Govt-Aided", "State-Univ-Dept"}
 
 
+def _canonical(frame: pd.DataFrame, keys: list[str], value_col: str) -> pd.DataFrame:
+    """Reduce `frame` to one `value_col` per `keys`, picking the shortest string.
+
+    Safe for college_name / branch_name / status: pdftotext corruption (stray
+    boilerplate merged onto a line) only ever ADDS text, so the shortest
+    variant per key is the clean one.
+    """
+    return (frame.assign(_len=frame[value_col].fillna("").str.len())
+                 .sort_values("_len")
+                 .drop_duplicates(keys)[keys + [value_col]])
+
+
+def _canonical_prefer_nonblank(frame: pd.DataFrame, keys: list[str], value_col: str) -> pd.DataFrame:
+    """Reduce `frame` to one `value_col` per `keys`, preferring a non-blank value.
+
+    Unlike `_canonical` above (fine for college_name / branch_name / status,
+    where corruption only ever ADDS text), a field like home_university is
+    genuinely blank in some rounds' PDFs and genuinely populated in others
+    for the same college — "" is always shortest, so blank must not be
+    allowed to beat a real value.
+    """
+    vals = frame[value_col].fillna("")
+    return (frame.assign(_blank=(vals == ""), _len=vals.str.len())
+                 .sort_values(["_blank", "_len"])
+                 .drop_duplicates(keys)[keys + [value_col]])
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -236,20 +277,51 @@ def main():
           f"{df.groupby(['college_code','branch_code','quota_section','seat_type']).ngroups:,}")
 
     print("\nStage 2 — closing ranks (MAX MeritNo per cell across rounds)")
+    # Grouping by raw college_name/branch_name/status let a corrupted
+    # PDF-extraction artifact (pdftotext merging stray boilerplate onto a
+    # college's name/status line in one round but not another) silently
+    # fragment one real institute into multiple rows, each computed from
+    # partial data — both wrong. Classify college_type from the RAW per-row
+    # status BEFORE aggregating, and group by college_type instead of raw
+    # status text: genuine dual-status institutes still get 2 separate rows,
+    # one per real type, while corrupted/clean text variants of the SAME
+    # type correctly merge into one.
+    df["college_type"] = df["status"].apply(classify_college_type)
+
     agg = (df.groupby(
-        ["college_code", "college_name", "branch_code", "branch_name",
-         "status", "quota_section", "seat_type"], dropna=False)
+        ["college_code", "branch_code", "quota_section", "seat_type",
+         "college_type"], dropna=False)
         .agg(closing_rank=("merit_no", "max"),
              opening_rank=("merit_no", "min"),
              closing_score=("merit_score", "min"),  # lower merit_no = higher score
              opening_score=("merit_score", "max"),
              allotted_count=("merit_no", "count"))
         .reset_index())
+
+    agg = agg.merge(_canonical(df, ["college_code"], "college_name"),
+                     on="college_code", how="left")
+    agg = agg.merge(_canonical(df, ["college_code", "branch_code"], "branch_name"),
+                     on=["college_code", "branch_code"], how="left")
+    agg = agg.merge(_canonical(df, ["college_code", "branch_code", "college_type"], "status"),
+                     on=["college_code", "branch_code", "college_type"], how="left")
+
     last_round = (df.sort_values("merit_no", ascending=False)
-                    .drop_duplicates(["college_code", "branch_code", "quota_section", "seat_type"])
-                    [["college_code", "branch_code", "quota_section", "seat_type", "round"]]
+                    .drop_duplicates(["college_code", "branch_code", "quota_section",
+                                      "seat_type", "college_type"])
+                    [["college_code", "branch_code", "quota_section", "seat_type",
+                      "college_type", "round"]]
                     .rename(columns={"round": "last_round_with_max"}))
-    agg = agg.merge(last_round, on=["college_code", "branch_code", "quota_section", "seat_type"])
+    agg = agg.merge(last_round, on=["college_code", "branch_code", "quota_section",
+                                    "seat_type", "college_type"])
+
+    # home_university is NOT part of the closing-rank grain above (it would
+    # fragment groups whenever a round's PDF happened to omit the clause) —
+    # canonicalize to one value per college_code, preferring non-blank, and
+    # merge it in afterwards instead.
+    agg = agg.merge(
+        _canonical_prefer_nonblank(df, ["college_code"], "home_university"),
+        on="college_code", how="left",
+    )
 
     cat_norm = agg["seat_type"].apply(lambda s: pd.Series(normalise_seat_type(s)))
     cat_norm.columns = ["category", "gender", "sub_pool"]
@@ -263,11 +335,13 @@ def main():
     agg["quota"] = agg["quota_section"]
     agg["rank_basis"] = "MH AAC-CET / NATA State Merit Rank"
     agg["source_url"] = SOURCE_URL
-    agg["college_type"] = agg["status"].apply(classify_college_type)
+    # college_type is already a column — it was a Stage 2 groupby key, not
+    # re-derived from (possibly corrupted) agg["status"] here.
 
     cols_out = [
         "state", "cet_name", "stream", "year", "round",
         "college_code", "college_name", "college_type", "status",
+        "home_university",
         "branch_code", "branch_name",
         "quota", "seat_type", "category", "gender", "sub_pool",
         "opening_rank", "closing_rank", "opening_score", "closing_score",
@@ -298,7 +372,7 @@ def main():
     ].copy()
     canon = (canon.groupby(
         ["state", "cet_name", "stream", "year", "round",
-         "college_code", "college_name", "college_type",
+         "college_code", "college_name", "college_type", "home_university",
          "branch_code", "branch_name",
          "quota", "category", "gender"], dropna=False)
         .agg(opening_rank=("opening_rank", "min"),
