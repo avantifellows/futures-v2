@@ -231,6 +231,28 @@ def classify_college_type(status: str | None) -> str:
 GOVT_TYPES = {"Govt", "Govt-Aided", "State-Univ-Dept"}
 
 
+def canonical_university_names(values) -> dict:
+    """Map each truncated Home University string onto its full form.
+
+    pdftotext cuts the "Home University : X" clause at the PDF's column width,
+    so ONE university surfaces under several prefixes — e.g. "Kavayitri
+    Bahinabai Chaudhari North Maharashtra" / "... Un" / "... Univ" /
+    "... University, Jalgaon". The longest form is always the correct one, so
+    every shorter string that is a prefix of a longer one collapses onto it.
+
+    Without this a GROUP BY home_university silently splits one university
+    across up to four rows (47 rows across the 2025 engineering set), which is
+    invisible in a total but produces duplicate bars in any per-university cut.
+    """
+    full = sorted({v for v in values if isinstance(v, str) and v}, key=len, reverse=True)
+    mapping = {}
+    for v in full:
+        longer = next((f for f in full if f != v and f.startswith(v)), None)
+        mapping[v] = longer or v
+    return mapping
+
+
+
 def _canonical_prefer_nonblank(frame: pd.DataFrame, keys: list[str], value_col: str) -> pd.DataFrame:
     """Reduce `frame` to one `value_col` per `keys`, preferring a non-blank value.
 
@@ -260,6 +282,16 @@ def main():
     print(f"  Total allotment rows parsed: {len(all_rows):,}")
 
     df = pd.DataFrame(all_rows)
+    # Collapse pdftotext's column-width truncations of the Home University
+    # clause BEFORE anything aggregates or groups on it.
+    if "home_university" in df.columns:
+        _uni = canonical_university_names(df["home_university"].dropna().unique())
+        _truncated = {k for k, v in _uni.items() if k != v}
+        _fixed = int(df["home_university"].isin(_truncated).sum())
+        df["home_university"] = df["home_university"].map(lambda v: _uni.get(v, v))
+        if _fixed:
+            print(f"  canonicalized {_fixed:,} truncated home_university values "
+                  f"({len(_truncated)} variants -> {df['home_university'].nunique()} universities)")
     if df.empty:
         print("ERROR: no rows parsed")
         return

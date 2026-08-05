@@ -163,6 +163,44 @@ class TestPageHeaderIsNotData(unittest.TestCase):
                          "digits survive the mask — the prefix guard is load-bearing")
 
 
+class TestUniversityNameCanonicalisation(unittest.TestCase):
+    """pdftotext truncates "Home University : X" at the PDF's column width.
+
+    One university surfaces under several prefixes, so a GROUP BY
+    home_university silently splits it — invisible in a total, but it produces
+    duplicate bars in any per-university cut and duplicate options in a UI
+    dropdown. The longest form is always the correct one.
+    """
+
+    KBC = "Kavayitri Bahinabai Chaudhari North Maharashtra University, Jalgaon"
+
+    def test_truncations_collapse_onto_the_full_name(self):
+        m = mh.canonical_university_names([
+            self.KBC,
+            "Kavayitri Bahinabai Chaudhari North Maharashtra",
+            "Kavayitri Bahinabai Chaudhari North Maharashtra Un",
+            "Kavayitri Bahinabai Chaudhari North Maharashtra Univ",
+        ])
+        self.assertEqual(set(m.values()), {self.KBC})
+
+    def test_distinct_universities_are_left_alone(self):
+        names = ["Mumbai University", "Shivaji University",
+                 "Savitribai Phule Pune University", "Autonomous Institute"]
+        m = mh.canonical_university_names(names)
+        for n in names:
+            self.assertEqual(m[n], n, n)
+
+    def test_blanks_and_non_strings_are_ignored(self):
+        m = mh.canonical_university_names(["Mumbai University", "", None])
+        self.assertEqual(m, {"Mumbai University": "Mumbai University"})
+
+    def test_arch_parser_shares_the_same_logic(self):
+        for names in (["Mumbai University"],
+                      [self.KBC, "Kavayitri Bahinabai Chaudhari North Maharashtra"]):
+            self.assertEqual(mh.canonical_university_names(names),
+                             mh_arch.canonical_university_names(names))
+
+
 class TestExamAttribution(unittest.TestCase):
     """Each stream must name the exam it is actually admitted on.
 
