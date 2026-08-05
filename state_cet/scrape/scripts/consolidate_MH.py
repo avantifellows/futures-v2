@@ -32,6 +32,7 @@ STREAM_FILES = [
 CANONICAL_COLS = [
     "state", "cet_name", "stream", "year", "round",
     "college_code", "college_name", "college_type",
+    "home_university",
     "branch_code", "branch_name",
     "quota", "category", "gender",
     "opening_rank", "closing_rank", "last_round_with_max",
