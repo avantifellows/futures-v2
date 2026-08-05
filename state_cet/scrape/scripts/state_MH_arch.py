@@ -36,7 +36,11 @@ INSTITUTE_LIST = ROOT / "source" / "MH" / "architecture" / "arch_institutes.tsv"
 OUT = ROOT / "extracted_data"
 STATE_CODE = "MH"
 YEAR = 2025
-CET_NAME = "MAH-AAC-CET / NATA"
+# B.Arch admission does NOT go through MHT-CET or MAH-AAC-CET (that one is
+# Fine Art). Candidates qualify via NATA or JEE Main Paper 2, and the CAP
+# merit score is NATA/2 + Class XII aggregate %, out of 200 — which is why
+# this stream carries merit SCORES as well as merit numbers.
+CET_NAME = "NATA / JEE Main Paper 2"
 SOURCE_URL = "https://arch2025.mahacet.org.in/"
 STREAM = "architecture"
 OUT_PREFIX = "arch"
@@ -64,8 +68,13 @@ ALLOT_PATTERN = re.compile(
     r"(.+?)\s+"                               # Name
     r"([MF])\s+"                              # Gender
     r"([A-Z][A-Z/$#0-9-]*)\s+"                # Category (raw cat, may have $/#/SC/OBC/SBC/OBC$)
-    r"[*@~^&]?\s*"                            # color marker — optional (Round 1 legitimately has none)
-    r"([A-Z]{2,12})\s*$"                      # SeatType — min length relaxed (real codes like "AI", "EWS" are 2-3 chars)
+    r"[*@~^&]?\s*"                            # color marker — OPTIONAL: Round 1
+                                              # has none (nothing to carry
+                                              # forward yet), and a small share
+                                              # of later rounds also lack it.
+    r"([A-Z0-9]{2,12})\s*$"                   # SeatType — {2,} admits short
+                                              # codes (AI, SC, ST, EWS); 0-9
+                                              # admits GNT1H/GNT2H/GNT3H.
 )
 
 
@@ -179,17 +188,25 @@ def normalise_seat_type(seat_type: str) -> tuple[str, str, str]:
     c = seat_type.upper()
     if c == "TFWS":  return ("OTHER", "All", "TFWS")
     if c == "ORPHAN":return ("OTHER", "All", "ORPHAN")
-    if c.startswith("DEFR"): return ("OTHER", "All", "DEFR")
-    if c.startswith("DEF"):  return ("OTHER", "All", "DEF")
-    if c.startswith("PWD"):
+    # PWD/DEF are horizontal flags over a base category — decode the base for
+    # both and keep the flag in sub_pool. (Kept in step with
+    # state_MH.normalise_category; DEF used to skip the decode, so DEFROBCS
+    # landed in OTHER while PWDROBC landed in OBC-NCL.)
+    if c.startswith(("DEF", "PWD")):
+        flag = c[:3]
         body = c[3:]
-        if body.startswith("R"): body = body[1:]
+        if body.startswith("R"):
+            body = body[1:]
+            flag += "R"
         cat, _, _ = _decode_body(body)
-        return (cat, "All", "PWD")
+        return (cat, "All", flag)
     if c == "EWS":  return ("EWS", "All", "")
     if c in ("MI", "MINO", "MIH", "MIO", "MIS"): return ("OTHER", "All", "MIN")
     if c[0] in ("G", "L"):
-        gender = "Boys" if c[0] == "G" else "Girls"
+        # G is General (gender-NEUTRAL, women included), L is Ladies — per the
+        # legend printed on the CET Cell cutoff pages. Female reservation here
+        # is horizontal, so G must not be labelled "Boys".
+        gender = "All" if c[0] == "G" else "Girls"
         body = c[1:]
         cat, _, _ = _decode_body(body)
         return (cat, gender, "")
@@ -333,7 +350,7 @@ def main():
     agg["year"] = YEAR
     agg["round"] = "R1+R2+R3+R4 (cumulative)"
     agg["quota"] = agg["quota_section"]
-    agg["rank_basis"] = "MH AAC-CET / NATA State Merit Rank"
+    agg["rank_basis"] = "MH B.Arch CAP Merit No (NATA/2 + XII%, max 200)"
     agg["source_url"] = SOURCE_URL
     # college_type is already a column — it was a Stage 2 groupby key, not
     # re-derived from (possibly corrupted) agg["status"] here.
@@ -380,7 +397,7 @@ def main():
              last_round_with_max=("last_round_with_max",
                                    lambda s: s.value_counts().index[0]))
         .reset_index())
-    canon["rank_basis"] = "MH AAC-CET / NATA State Merit Rank"
+    canon["rank_basis"] = "MH B.Arch CAP Merit No (NATA/2 + XII%, max 200)"
     canon["source_url"] = SOURCE_URL
     canon.to_csv(
         OUT / f"{STATE_CODE}_{OUT_PREFIX}_consolidated_5cat_govt_{YEAR}.csv", index=False
