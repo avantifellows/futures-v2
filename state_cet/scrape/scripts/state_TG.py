@@ -3,52 +3,70 @@ Telangana TG-EAPCET (formerly TS EAMCET) — engineering closing-ranks pipeline.
 
 Authority:  TGCHE (Telangana State Council of Higher Education)
             + Convener TG-EAPCET / JNTU Hyderabad
-Portal:     https://tgeapcet.nic.in/  (rolled into 2026 mode; 2025 PDFs no
-            longer at original URLs)
-Source:     TG-EAPCET 2024 Last Rank Statements (P1, P2, FinalPhase) sourced
-            from Drive mirrors via forum.universityupdates.in. Used as
-            proxy for 2025 — same precedent as KA / RJ.
+Portal:     https://tgeapcetd.nic.in/files/  (2025 Last Rank Statements are
+            published here directly — the older tgeapcet.nic.in mirror used
+            for 2024 no longer serves these files).
+Source:     TG-EAPCET 2025 Last Rank Statements (First Phase, Second Phase,
+            Final Phase), downloaded directly from tgeapcetd.nic.in. This is
+            the actual 2025 counselling data — no longer a 2024-as-proxy.
+            Direct download links (place under source/TG/engineering/):
+              https://tgeapcetd.nic.in/files/TGEAPCET_2025_LASTRANKS_FirstPhase.pdf
+              https://tgeapcetd.nic.in/files/TGEAPCET_2025_LASTRANKS_SecondPhase.pdf
+              https://tgeapcetd.nic.in/files/TGEAPCET_2025_FINALPHASE_LASTRANKS.pdf
 
 PDF format (clean tabular, pdfplumber extracts cleanly):
-  29 columns per (college, branch) row:
+  31 columns per (college, branch) row:
     Inst Code | Institute Name | Place | Dist Code | Co Education |
-    College Type (PVT/GOVT/UNIV) | Year of Estab | Branch Code | Branch Name |
+    College Type (PVT/UNIV/SF/GOV) | Branch Code | Branch Name |
     OC_BOYS | OC_GIRLS | BC_A BOYS | BC_A GIRLS | BC_B BOYS | BC_B GIRLS |
     BC_C BOYS | BC_C GIRLS | BC_D BOYS | BC_D GIRLS | BC_E BOYS | BC_E GIRLS |
-    SC_BOYS | SC_GIRLS | ST_BOYS | ST_GIRLS | EWS_GEN_OU | EWS_GIRLS_OU |
-    Tuition Fee | Affiliated To
+    SC_I BOYS | SC_I GIRLS | SC_II BOYS | SC_II GIRLS | SC_III BOYS |
+    SC_III GIRLS | ST_BOYS | ST_GIRLS | EWS_BOYS | EWS_GIRLS | Affiliated To
+
+  Changed vs the 2024 PDF format:
+    - No "Year of Estab" column (Branch Code shifts from col 7 → col 6).
+    - No "Tuition Fee" column (Affiliated To is now the last column).
+    - SC is split into SC_I / SC_II / SC_III (2024 SC Rationalization GO
+      sub-categories) instead of one SC column — same split already used
+      in state_medical's TG NEET pipeline.
+    - EWS has no "_OU" suffix / OU-only caveat — it's a plain EWS column,
+      not scoped to the Osmania local-area sub-pool the way the 2024 PDF's
+      EWS_GEN_OU / EWS_GIRLS_OU columns were.
+    - "College Type" values are PVT / UNIV / SF / GOV — note "GOV", not
+      "GOVT", and a new "SF" value (self-finance stream within a state
+      university, e.g. JNAFAU School of Planning — Self Finance). SF is
+      not govt-subsidized, so it's classified as Private/SF, same as PVT.
 
 Reservation taxonomy (Telangana):
-  Vertical (caste): OC / BC_A / BC_B / BC_C / BC_D / BC_E / SC / ST + EWS
+  Vertical (caste): OC / BC_A / BC_B / BC_C / BC_D / BC_E / SC_I / SC_II /
+                     SC_III / ST + EWS
   Horizontal: BOYS / GIRLS (33% women's reservation embedded)
-  Local-area sub-pools: OU (Osmania — covers most of TG) / KU (Kakatiya —
-                        Warangal area) / TGUR (TG Universal/non-local 15%)
-                        — the published PDF appears to show OU sub-pool ranks
-                        primarily; EWS is OU-specific in this PDF.
+  Local-area sub-pools (OU / KU / TGUR) are not exposed as separate columns
+  in this PDF — closing ranks shown are the headline (all-local-area) ranks.
 
 For canonical 5-cat mapping (NCST schema):
-  OC                                → GEN
-  BC_A, BC_B, BC_C, BC_D, BC_E      → OBC-NCL (TG's BC sub-list — approximate)
-  SC                                → SC
-  ST                                → ST
-  EWS                               → EWS
+  OC                                  → GEN
+  BC_A, BC_B, BC_C, BC_D, BC_E        → OBC-NCL (TG's BC sub-list — approximate)
+  SC_I, SC_II, SC_III                 → SC
+  ST                                  → ST
+  EWS                                 → EWS
 
 For Avanti JNV TG student:
   - JNV is Central govt school — no horizontal "govt school student"
-    reservation in TG. Compete in regular OC/BC*/SC/ST per caste category.
+    reservation in TG. Compete in regular OC/BC*/SC*/ST per caste category.
   - Local area: most JNV districts in TG would be OU (Osmania); Warangal/
     Karimnagar/Khammam districts → KU. The PDF doesn't expose local area
-    explicitly per row except for EWS, so we use the headline closing rank.
+    explicitly per row, so we use the headline closing rank.
 
-Methodology: TG publishes Phase 1, Phase 2, and Final Phase last-rank PDFs.
-Final Phase = cumulative through Phase 3 (the last main allotment round).
-Stray vacancy rounds excluded. We use Final Phase as the authoritative
-closing rank.
+Methodology: TG publishes First Phase, Second Phase, and Final Phase
+last-rank PDFs. Final Phase = cumulative through the last main allotment
+round. Stray vacancy rounds excluded. We use Final Phase as the
+authoritative closing rank.
 
 Output (to extracted_data/):
-  - TG_engg_all_cutoffs_2024.csv         — long, every (college, branch, cat) cell
-  - TG_engg_closing_ranks_govt_2024.csv  — govt scope
-  - TG_engg_consolidated_5cat_govt_2024.csv  — schema-canonical
+  - TG_engg_all_cutoffs_2025.csv         — long, every (college, branch, cat) cell
+  - TG_engg_closing_ranks_govt_2025.csv  — govt scope
+  - TG_engg_consolidated_5cat_govt_2025.csv  — schema-canonical
 """
 from __future__ import annotations
 from pathlib import Path
@@ -59,37 +77,41 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "source" / "TG" / "engineering"
 OUT = ROOT / "extracted_data"
 STATE_CODE = "TG"
-DATA_YEAR = 2024  # TG-EAPCET 2024 used as proxy for 2025
+DATA_YEAR = 2025
 CET_NAME = "TG-EAPCET"
-SOURCE_URL = "https://tgeapcet.nic.in/"
+SOURCE_URL = "https://tgeapcetd.nic.in/"
 
 PHASE_FILES = [
-    ("TG_EAPCET_2024_FirstPhase_LastRanks.pdf", "P1"),
-    ("TG_EAPCET_2024_SecondPhase_LastRanks.pdf", "P2"),
-    ("TG_EAPCET_2024_FinalPhase_LastRanks.pdf",  "PFinal"),  # ← used for closing
+    ("TGEAPCET_2025_LASTRANKS_FirstPhase.pdf",  "P1"),
+    ("TGEAPCET_2025_LASTRANKS_SecondPhase.pdf", "P2"),
+    ("TGEAPCET_2025_FINALPHASE_LASTRANKS.pdf",  "PFinal"),  # ← used for closing
 ]
 
 # Cell column → (canonical_category, gender)
 CELL_COLUMNS = [
     # (col_idx, raw_label, canonical_cat, gender)
-    (9,  "OC_BOYS",      "GEN",      "Boys"),
-    (10, "OC_GIRLS",     "GEN",      "Girls"),
-    (11, "BC_A_BOYS",    "OBC-NCL",  "Boys"),
-    (12, "BC_A_GIRLS",   "OBC-NCL",  "Girls"),
-    (13, "BC_B_BOYS",    "OBC-NCL",  "Boys"),
-    (14, "BC_B_GIRLS",   "OBC-NCL",  "Girls"),
-    (15, "BC_C_BOYS",    "OBC-NCL",  "Boys"),
-    (16, "BC_C_GIRLS",   "OBC-NCL",  "Girls"),
-    (17, "BC_D_BOYS",    "OBC-NCL",  "Boys"),
-    (18, "BC_D_GIRLS",   "OBC-NCL",  "Girls"),
-    (19, "BC_E_BOYS",    "OBC-NCL",  "Boys"),
-    (20, "BC_E_GIRLS",   "OBC-NCL",  "Girls"),
-    (21, "SC_BOYS",      "SC",       "Boys"),
-    (22, "SC_GIRLS",     "SC",       "Girls"),
-    (23, "ST_BOYS",      "ST",       "Boys"),
-    (24, "ST_GIRLS",     "ST",       "Girls"),
-    (25, "EWS_GEN_OU",   "EWS",      "Boys"),
-    (26, "EWS_GIRLS_OU", "EWS",      "Girls"),
+    (8,  "OC_BOYS",       "GEN",      "Boys"),
+    (9,  "OC_GIRLS",      "GEN",      "Girls"),
+    (10, "BC_A_BOYS",     "OBC-NCL",  "Boys"),
+    (11, "BC_A_GIRLS",    "OBC-NCL",  "Girls"),
+    (12, "BC_B_BOYS",     "OBC-NCL",  "Boys"),
+    (13, "BC_B_GIRLS",    "OBC-NCL",  "Girls"),
+    (14, "BC_C_BOYS",     "OBC-NCL",  "Boys"),
+    (15, "BC_C_GIRLS",    "OBC-NCL",  "Girls"),
+    (16, "BC_D_BOYS",     "OBC-NCL",  "Boys"),
+    (17, "BC_D_GIRLS",    "OBC-NCL",  "Girls"),
+    (18, "BC_E_BOYS",     "OBC-NCL",  "Boys"),
+    (19, "BC_E_GIRLS",    "OBC-NCL",  "Girls"),
+    (20, "SC_I_BOYS",     "SC",       "Boys"),
+    (21, "SC_I_GIRLS",    "SC",       "Girls"),
+    (22, "SC_II_BOYS",    "SC",       "Boys"),
+    (23, "SC_II_GIRLS",   "SC",       "Girls"),
+    (24, "SC_III_BOYS",   "SC",       "Boys"),
+    (25, "SC_III_GIRLS",  "SC",       "Girls"),
+    (26, "ST_BOYS",       "ST",       "Boys"),
+    (27, "ST_GIRLS",      "ST",       "Girls"),
+    (28, "EWS_BOYS",      "EWS",      "Boys"),
+    (29, "EWS_GIRLS",     "EWS",      "Girls"),
 ]
 
 
@@ -101,13 +123,13 @@ def parse_tg_phase_pdf(pdf_path: Path, phase_label: str) -> list[dict]:
             tables = page.extract_tables() or []
             for tbl in tables:
                 for r in tbl:
-                    if not r or len(r) < 27:
+                    if not r or len(r) < 30:
                         continue
                     code = (r[0] or "").strip()
-                    # Header rows have no 4-letter code
+                    # Header rows have no 3+-letter code
                     if not (len(code) >= 3 and code.isalpha() and code.isupper()):
                         continue
-                    branch_code = (r[7] or "").strip()
+                    branch_code = (r[6] or "").strip()
                     if not branch_code:
                         continue
                     college = (r[1] or "").strip()
@@ -115,10 +137,8 @@ def parse_tg_phase_pdf(pdf_path: Path, phase_label: str) -> list[dict]:
                     dist = (r[3] or "").strip()
                     coed = (r[4] or "").strip()
                     coll_type = (r[5] or "").strip().upper()
-                    estd = (r[6] or "").strip()
-                    branch_name = (r[8] or "").strip()
-                    affiliated = (r[28] or "").strip() if len(r) > 28 else ""
-                    fee = (r[27] or "").strip() if len(r) > 27 else ""
+                    branch_name = (r[7] or "").strip()
+                    affiliated = (r[30] or "").strip() if len(r) > 30 else ""
 
                     for col_idx, raw_lbl, cat, gender in CELL_COLUMNS:
                         if col_idx >= len(r):
@@ -138,14 +158,12 @@ def parse_tg_phase_pdf(pdf_path: Path, phase_label: str) -> list[dict]:
                             "dist": dist,
                             "coed": coed,
                             "college_type_raw": coll_type,
-                            "estd": estd,
                             "branch_code": branch_code,
                             "branch_name": branch_name,
                             "category_raw": raw_lbl,
                             "category": cat,
                             "gender": gender,
                             "closing_rank": rank,
-                            "tuition_fee": fee,
                             "affiliated_to": affiliated,
                         })
     return rows
@@ -153,20 +171,15 @@ def parse_tg_phase_pdf(pdf_path: Path, phase_label: str) -> list[dict]:
 
 def classify_tg_college(coll_type_raw: str, college_name: str, affiliated: str) -> str:
     """Govt scope classifier.
-    PDF has 'PVT' / 'GOVT' / 'UNIV' in college_type column. Use that as primary.
+    PDF has 'PVT' / 'UNIV' / 'SF' / 'GOV' in college_type column. Use that
+    as primary. 'SF' (self-finance stream within a state university, e.g.
+    JNAFAU School of Planning — Self Finance) is not govt-subsidized, so
+    it's treated like PVT.
     """
     t = coll_type_raw.strip().upper()
-    if t == "GOVT":
+    if t in ("GOVT", "GOV"):
         return "Govt"
     if t == "UNIV":
-        return "State-Univ-Dept"
-    if t == "PVT":
-        # Check if it's a govt-aided autonomous (mostly we'll skip these)
-        return "Private/SF"
-    # Heuristic fallback by name pattern
-    if "GOVERNMENT" in college_name.upper() or "GOVT" in college_name.upper():
-        return "Govt"
-    if "UNIVERSITY" in college_name.upper():
         return "State-Univ-Dept"
     return "Private/SF"
 
@@ -198,8 +211,8 @@ def main():
     print("\nStage 2 — closing ranks: take MAX(rank) across all 3 phases")
     closing = (df.groupby(
         ["college_code", "college_name", "place", "dist", "coed",
-         "college_type_raw", "estd", "branch_code", "branch_name",
-         "category_raw", "category", "gender", "tuition_fee", "affiliated_to"],
+         "college_type_raw", "branch_code", "branch_name",
+         "category_raw", "category", "gender", "affiliated_to"],
         dropna=False,
     ).agg(
         opening_rank=("closing_rank", "min"),
@@ -244,7 +257,7 @@ def main():
         OUT / f"{STATE_CODE}_engg_closing_ranks_govt_{DATA_YEAR}.csv", index=False,
     )
 
-    # 5-cat consolidated (BC_A...BC_E aggregated to OBC-NCL)
+    # 5-cat consolidated (BC_A...BC_E aggregated to OBC-NCL, SC_I..SC_III to SC)
     print("\nStage 4 — schema-canonical 5-cat consolidated")
     canon = govt.groupby(
         ["state", "cet_name", "stream", "year", "round",
