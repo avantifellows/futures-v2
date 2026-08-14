@@ -69,6 +69,7 @@ Output (to extracted_data/):
   - TG_engg_consolidated_5cat_govt_2025.csv  — schema-canonical
 """
 from __future__ import annotations
+import re
 from pathlib import Path
 import pandas as pd
 import pdfplumber
@@ -206,15 +207,46 @@ def main():
     print(f"  Distinct colleges: {df['college_code'].nunique()}")
     print(f"  Distinct (college × branch): "
           f"{df.groupby(['college_code','branch_code']).ngroups}")
-    df.to_csv(OUT / f"{STATE_CODE}_engg_all_phases_{DATA_YEAR}.csv", index=False)
+    df.to_csv(OUT / f"{STATE_CODE}_engg_all_cutoffs_{DATA_YEAR}.csv", index=False)
+
+    # college_name/branch_name/place/affiliated_to wrap across lines in the
+    # PDF, and the wrap point isn't stable between phase files (e.g. P1 has
+    # "ELECTRONICS AND COMMUNICATION ENGINEERING", P2 has "ELECTRONICS AND
+    # COMMUNICATION\nENGINEERING" for the exact same seat). Left as-is, that
+    # turns one seat into two groupby keys below, so MAX(rank) never compares
+    # them against each other and the "closing rank" can come from whichever
+    # phase happened to keep the higher-numbered variant.
+    #
+    # A plain "collapse \s+ to one space" isn't enough on its own: some wraps
+    # split a single word mid-token with no real space there at all (e.g.
+    # "MAHABUBABA\nD" should rejoin to "MAHABUBABAD", not "MAHABUBABA D" —
+    # collapsing the newline to a space leaves it looking like two words and
+    # still failing to match the un-wrapped "MAHABUBABAD" from another phase).
+    # So we group on an ALL-whitespace-stripped match key, which collides
+    # correctly regardless of *where* a wrap landed, and separately pick the
+    # most common cleanly-spaced spelling per group for display — the same
+    # "pick the mode across phases" trick already used for last_phase_with_max.
+    def _clean(s):
+        return re.sub(r"\s+", " ", str(s)).strip()
+
+    def _match_key(s):
+        return re.sub(r"\s+", "", str(s)).upper()
+
+    for c in ("college_name", "branch_name", "place", "affiliated_to"):
+        df[f"{c}_key"] = df[c].map(_match_key)
+        df[c] = df[c].map(_clean)
 
     print("\nStage 2 — closing ranks: take MAX(rank) across all 3 phases")
     closing = (df.groupby(
-        ["college_code", "college_name", "place", "dist", "coed",
-         "college_type_raw", "branch_code", "branch_name",
-         "category_raw", "category", "gender", "affiliated_to"],
+        ["college_code", "college_name_key", "place_key", "dist", "coed",
+         "college_type_raw", "branch_code", "branch_name_key",
+         "category_raw", "category", "gender", "affiliated_to_key"],
         dropna=False,
     ).agg(
+        college_name=("college_name", lambda s: s.value_counts().index[0]),
+        place=("place", lambda s: s.value_counts().index[0]),
+        branch_name=("branch_name", lambda s: s.value_counts().index[0]),
+        affiliated_to=("affiliated_to", lambda s: s.value_counts().index[0]),
         opening_rank=("closing_rank", "min"),
         closing_rank=("closing_rank", "max"),
         last_phase_with_max=("phase",
