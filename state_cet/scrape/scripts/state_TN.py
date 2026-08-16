@@ -43,11 +43,21 @@ Methodology applied:
     + whitelist classifier.
 
 Govt-college classification:
-  - "University Departments of Anna University" / "Anna University Regional
-    Campus" → Govt (state public university)
-  - Names containing "Government" / "Govt." → Govt
-  - Whitelisted aided autonomous institutions (PSG Tech, etc.) → Govt-Aided
+  - Code-based, NOT name-pattern matching. College-name text drifts across
+    scrapes (address formatting, whitespace, "(Autonomous)"/(SS) suffixes),
+    but the official TNEA college Code is stable — so we classify off the
+    authoritative "List of Colleges (Code Number wise)" published by DOTE TN:
+    https://static.tneaonline.org/docs/Information_About_Colleges.pdf?t=1640044800060
+  - University Departments (Anna University + Annamalai University Faculty of
+    Engg, codes 0001-0005) → Govt
+  - Government Colleges of Engineering (codes 1516, 2005, 2369, 2603, 2615,
+    2709, 3464, 3465, 4974, 5009, 5901) → Govt
+  - Government Aided Colleges (codes 2006, 2007, 5008 — PSG Tech, CIT,
+    Thiagarajar) → Govt-Aided
+  - CECRI AND CIPET section of the same PDF (codes 1321, 2343, 5012 — central
+    govt research institutes) → Govt
   - Everything else → Private/Self-Financed/Deemed
+  - See CODE_TO_TYPE / the code sets below for the exact list.
 
 For canonical 5-cat mapping (NCST schema):
   OC  → GEN  (Open Category — TN does not have a separate EWS column)
@@ -70,7 +80,6 @@ Output (to extracted_data/):
   - TN_engg_consolidated_5cat_govt_2025.csv — schema-canonical
 """
 from __future__ import annotations
-import re
 from pathlib import Path
 
 import pandas as pd
@@ -87,45 +96,71 @@ CATEGORIES = ["OC", "BC", "BCM", "MBC", "SC", "SCA", "ST"]
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# Govt-college classifier
+# Govt-college classifier — code-based, per official TNEA college list
+# Source: "List of Colleges (Code Number wise)" — Directorate of Technical
+# Education, Tamil Nadu:
+# https://static.tneaonline.org/docs/Information_About_Colleges.pdf?t=1640044800060
+# Codes, not names, are authoritative — college-name text drifts across
+# scrapes (address formatting, whitespace, "(Autonomous)"/(SS) suffixes),
+# codes don't. Replaces the earlier name-regex heuristic.
 # ───────────────────────────────────────────────────────────────────────────
-GOVT_PATTERNS = [
-    (r"^University Departments of Anna University", "Govt"),
-    (r"\bAnna University Regional Campus", "Govt"),
-    (r"\bGovernment College of Engineering", "Govt"),
-    (r"\bGovernment Engineering College", "Govt"),
-    (r"\bGovt\.?\s+College", "Govt"),
-    (r"\bGovernment College of Tech", "Govt"),
-    (r"\bAlagappa\s+Chettiar", "Govt"),  # ACGCET Karaikudi — govt
-    (r"\bUniversity College of Engineering", "Govt"),  # Anna Univ regional centres
-    (r"\bIndian Institute", "Govt"),  # IIITs at TN (e.g. IIITDM)
-    (r"\bM\.I\.T\.\s+Anna University|MIT Anna University|Madras Institute of Technology, Anna", "Govt"),
-]
 
-# Curated whitelist of TN govt-aided engineering colleges (legacy aided autonomous)
-GOVT_AIDED_WHITELIST = [
-    r"\bP\.?S\.?G\.?\s+College of Technology\b",       # PSG Tech Coimbatore (govt-aided)
-    r"\bPSG Institute of Technology\b",
-    r"\bThiagarajar College of Engineering\b",         # TCE Madurai (aided autonomous)
-    r"\bC\.?S\.?I\.? Institute of Technology\b",       # Some are aided
-    r"\bK\.?L\.?N\.? College of Engineering\b",
-    r"\bCoimbatore Institute of Technology\b",         # CIT (aided autonomous)
-    r"\bMepco Schlenk Engineering College\b",          # Mepco Sivakasi (aided)
-    r"\bSethu Institute of Technology\b",              # aided in some lists
-    r"\bSSN College of Engineering\b",                 # Sometimes classified aided
-    r"\bA C College of Engineering and Technology\b",  # AC Tech Karaikudi
-]
+# UNIVERSITY DEPARTMENTS section of the PDF — Anna University campuses +
+# Annamalai University Faculty of Engineering. State public university depts.
+UNIVERSITY_DEPT_CODES = {
+    1,  # University Departments of Anna University, Chennai - CEG Campus
+    2,  # University Departments of Anna University, Chennai - ACT Campus
+    3,  # University Departments of Anna University, Chennai - SAP Campus
+    4,  # University Departments of Anna University, Chennai - MIT Campus
+    5,  # Annamalai University Faculty of Engineering and Technology
+}
+
+# GOVERNMENT COLLEGES section — state govt-run engineering colleges.
+GOVT_COLLEGE_CODES = {
+    1516,  # Thanthai Periyar Government Institute of Technology, Vellore District
+    2005,  # Government College of Technology (Autonomous), Coimbatore District
+    2369,  # Government College of Engineering, Dharmapuri District
+    2603,  # Government College of Engineering (Autonomous), Bargur, Krishnagiri District
+    2615,  # Government College of Engineering (Autonomous), Salem District
+    2709,  # Government Engineering College, Erode District
+    3464,  # Government College of Engineering, Thanjavur District
+    3465,  # Government College of Engineering, Srirangam, Tiruchirappalli District
+    4974,  # Government College of Engineering, Tirunelveli District
+    5009,  # Government College of Engineering, Theni District
+    5901,  # Alagappa Chettiar Government College of Engineering and Technology (Autonomous), Karaikudi
+}
+
+# GOVERNMENT AIDED COLLEGES section — legacy aided autonomous institutions.
+GOVT_AIDED_COLLEGE_CODES = {
+    2006,  # PSG College of Technology (Autonomous), Coimbatore District
+    2007,  # Coimbatore Institute of Technology (Autonomous), Coimbatore District
+    5008,  # Thiagarajar College of Engineering (Autonomous), Madurai District
+}
+
+# CECRI AND CIPET section of the same PDF — central-govt research institutes
+# (CIPET under Min. of Chemicals, CECRI under CSIR, IIHT under Handlooms
+# dept.). Treated as Govt scope for consistency with how other central-govt
+# institutes are treated elsewhere in this pipeline.
+CENTRAL_GOVT_INSTITUTE_CODES = {
+    1321,  # Central Institute of Plastics Engineering and Technology (CIPET), Chennai
+    2343,  # Indian Institute of Handloom Technology, Salem District
+    5012,  # Central Electrochemical Research Institute (CECRI), Karaikudi
+}
+
+GOVT_CODES = UNIVERSITY_DEPT_CODES | GOVT_COLLEGE_CODES | CENTRAL_GOVT_INSTITUTE_CODES
 
 
-def classify_tn_college(name: str) -> str:
-    if not name:
+def classify_tn_college(code) -> str:
+    """Classify by official TNEA college Code (see code sets above) —
+    NOT by college-name text, which drifts across scrapes."""
+    try:
+        code_int = int(str(code).strip())
+    except (TypeError, ValueError):
         return "Unknown"
-    for pat, cls in GOVT_PATTERNS:
-        if re.search(pat, name, re.IGNORECASE):
-            return cls
-    for pat in GOVT_AIDED_WHITELIST:
-        if re.search(pat, name, re.IGNORECASE):
-            return "Govt-Aided"
+    if code_int in GOVT_CODES:
+        return "Govt"
+    if code_int in GOVT_AIDED_COLLEGE_CODES:
+        return "Govt-Aided"
     return "Private/SF"
 
 
@@ -204,7 +239,7 @@ def main():
     merged.to_csv(OUT / f"{STATE_CODE}_engg_all_cutoffs_{DATA_YEAR}.csv", index=False)
 
     print("\nStage 4 — classify govt scope, normalise to 5-cat")
-    merged["college_type"] = merged["College"].apply(classify_tn_college)
+    merged["college_type"] = merged["Code"].apply(classify_tn_college)
     print("  by college_type:")
     for t, n in merged.groupby(["Code", "College", "college_type"]).size().reset_index().college_type.value_counts().items():
         print(f"    {t:18s} {n:>4} colleges")
