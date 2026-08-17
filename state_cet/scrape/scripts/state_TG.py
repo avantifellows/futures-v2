@@ -207,7 +207,9 @@ def main():
     print(f"  Distinct colleges: {df['college_code'].nunique()}")
     print(f"  Distinct (college × branch): "
           f"{df.groupby(['college_code','branch_code']).ngroups}")
-    df.to_csv(OUT / f"{STATE_CODE}_engg_all_cutoffs_{DATA_YEAR}.csv", index=False)
+    # NOTE: the all_cutoffs dump is written AFTER the name cleanup below, not
+    # here. It is the file downstream consumers (external_data_sources) build
+    # from, so it must not carry the raw line-wrapped / garbled name strings.
 
     # college_name/branch_name/place/affiliated_to wrap across lines in the
     # PDF, and the wrap point isn't stable between phase files (e.g. P1 has
@@ -235,6 +237,55 @@ def main():
     for c in ("college_name", "branch_name", "place", "affiliated_to"):
         df[f"{c}_key"] = df[c].map(_match_key)
         df[c] = df[c].map(_clean)
+
+    # ── repair overlapping-text-run garbling ────────────────────────────────
+    # Separate from the line-wrap problem above. On some pages the PDF prints
+    # TWO text runs at the same y-coordinate — the institute name and the place
+    # — and pdfplumber merges them by x-position, interleaving them character
+    # by character. "EARTH SCIENCES" + "KOTHAGUDEM" comes out as
+    # "KEAORTTHHA GSCUIDENEMCE)S". Other pages bleed a stray "(AUTONOMOUS)" or
+    # "SELF FINANCE" line into the name cell. Affects 8 of 162 colleges,
+    # 3 of them govt-scope (ESUT, JNTM, SUCE).
+    #
+    # Two consequences if left alone: (1) the garbled string is what a student
+    # would be shown, and (2) because the name feeds the match key, the SAME
+    # seat gets two different keys and survives Stage 2 as two rows.
+    #
+    # The institute Code is the identity the source actually guarantees, and a
+    # clean rendering of every affected college exists on some other page. So
+    # per college_code we pick the single best spelling and overwrite the rest.
+    # "Best" = most frequent among the candidates that look like real words;
+    # interleaved text is detected by having almost no recognisable English
+    # tokens, which the real names always have (COLLEGE / ENGG / INSTITUTE /
+    # UNIV / TECHNOLOGY ...).
+    _WORDS = ("COLLEGE", "COLLGE", "ENGG", "ENGINEERING", "INSTITUTE", "INST",
+              "TECHNOLOGY", "UNIV", "UNIVERSITY", "SCIENCE", "SCIENCES",
+              "WOMEN", "MANAGEMENT", "RESEARCH", "SCHOOL", "ACADEMY")
+
+    def _looks_clean(name: str) -> bool:
+        up = str(name).upper()
+        return any(w in up for w in _WORDS)
+
+    def _pick_name(series: pd.Series) -> str:
+        counts = series.value_counts()
+        clean = [n for n in counts.index if _looks_clean(n)]
+        if clean:
+            # shortest clean spelling: stray "(AUTONOMOUS)"/"SELF FINANCE"
+            # prefixes only ever ADD tokens to the true name.
+            return min(clean, key=lambda n: (len(n), n))
+        return counts.index[0]
+
+    for col in ("college_name", "place"):
+        canon = df.groupby("college_code")[col].transform(_pick_name)
+        n_fixed = int((df[col] != canon).sum())
+        if n_fixed:
+            print(f"  repaired {n_fixed:,} garbled/variant {col} cells "
+                  f"({df.loc[df[col] != canon, 'college_code'].nunique()} colleges)")
+        df[col] = canon
+        df[f"{col}_key"] = df[col].map(_match_key)
+
+    df.drop(columns=[c for c in df.columns if c.endswith("_key")]).to_csv(
+        OUT / f"{STATE_CODE}_engg_all_cutoffs_{DATA_YEAR}.csv", index=False)
 
     print("\nStage 2 — closing ranks: take MAX(rank) across all 3 phases")
     closing = (df.groupby(
