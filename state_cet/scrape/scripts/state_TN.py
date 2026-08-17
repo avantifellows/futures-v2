@@ -39,8 +39,9 @@ Methodology applied:
     not per-round breakdowns. So the data IS the closing rank/mark for
     the final round (no MAX-aggregation needed).
   - Govt scope: state govt + state govt-aided colleges. TN's engineering
-    portal doesn't carry an explicit type column, so we use a name-pattern
-    + whitelist classifier.
+    portal doesn't carry an explicit type column, so we classify off the
+    official TNEA college-code list (see "Govt-college classification"
+    below) rather than name-pattern matching.
 
 Govt-college classification:
   - Code-based, NOT name-pattern matching. College-name text drifts across
@@ -56,8 +57,11 @@ Govt-college classification:
     Thiagarajar) → Govt-Aided
   - CECRI AND CIPET section of the same PDF (codes 1321, 2343, 5012 — central
     govt research institutes) → Govt
+  - Constituent Colleges section of the same PDF (codes 1013, 1014, 1015,
+    1026, 2025, 3011, 3016, 3018, 3019, 3021, 4020, 4023, 4024, 5010 — Anna
+    University's own constituent colleges + regional campuses) → Govt
   - Everything else → Private/Self-Financed/Deemed
-  - See CODE_TO_TYPE / the code sets below for the exact list.
+  - See the code sets below for the exact list.
 
 For canonical 5-cat mapping (NCST schema):
   OC  → GEN  (Open Category — TN does not have a separate EWS column)
@@ -139,15 +143,38 @@ GOVT_AIDED_COLLEGE_CODES = {
 
 # CECRI AND CIPET section of the same PDF — central-govt research institutes
 # (CIPET under Min. of Chemicals, CECRI under CSIR, IIHT under Handlooms
-# dept.). Treated as Govt scope for consistency with how other central-govt
-# institutes are treated elsewhere in this pipeline.
+# dept.), admitting through TNEA counselling. Treated as Govt scope.
 CENTRAL_GOVT_INSTITUTE_CODES = {
     1321,  # Central Institute of Plastics Engineering and Technology (CIPET), Chennai
     2343,  # Indian Institute of Handloom Technology, Salem District
     5012,  # Central Electrochemical Research Institute (CECRI), Karaikudi
 }
 
-GOVT_CODES = UNIVERSITY_DEPT_CODES | GOVT_COLLEGE_CODES | CENTRAL_GOVT_INSTITUTE_CODES
+# CONSTITUENT COLLEGES section — Anna University's own constituent colleges
+# and regional campuses. State-run public institutions.
+CONSTITUENT_COLLEGE_CODES = {
+    1013,  # University College of Engineering, Villupuram
+    1014,  # University College of Engineering, Tindivanam
+    1015,  # University College of Engineering, Arni
+    1026,  # University College of Engineering, Kancheepuram
+    2025,  # Anna University Regional Campus - Coimbatore
+    3011,  # University College of Engineering, Tiruchirappalli (BIT)
+    3016,  # University College of Engineering, Ariyalur
+    3018,  # University College of Engineering, Thirukkuvalai
+    3019,  # University College of Engineering, Panruti
+    3021,  # University College of Engineering, Pattukkottai
+    4020,  # Anna University Regional Campus - Tirunelveli
+    4023,  # University College of Engineering, Nagercoil
+    4024,  # University V.O.C. College of Engineering, Thoothukudi
+    5010,  # Anna University Regional Campus - Madurai
+}
+
+GOVT_CODES = (
+    UNIVERSITY_DEPT_CODES
+    | GOVT_COLLEGE_CODES
+    | CENTRAL_GOVT_INSTITUTE_CODES
+    | CONSTITUENT_COLLEGE_CODES
+)
 
 
 def classify_tn_college(code) -> str:
