@@ -1,6 +1,0 @@
-# Raw source PDFs and extracted CSVs — staged to GCS, not committed.
-scrape/source/
-scrape/extracted_data/
-clean/
-__pycache__/
-*.pyc
