@@ -1,4 +1,12 @@
 """
+SUPERSEDED (2026-08-21) — WBJEE now lives in external_data_sources/wbjee/.
+
+That pipeline fetches the ORCR reports directly (the enc token's '+' must be
+passed literally, NOT percent-encoded — that quirk is why this script leaned
+on browser-saved HTML), covers 2021-2026 including the live 2026 cycle, and
+loads BigQuery `wbjee_fact_cutoffs` (21,936 rows). This copy stays for the
+consolidated state_cet 5-cat product only; do not extend it.
+
 West Bengal WBJEE — engineering closing-ranks pipeline.
 
 Authority:  West Bengal Joint Entrance Examinations Board (WBJEEB)

@@ -8,6 +8,12 @@ Verbatim copy of the state-CET scrape pipeline from the `College DB` repo
 - **`source/`** (gitignored, ~117 MB in the bundle, belongs in GCS) — the raw
   cutoff PDFs/HTML per state.
 
+## Superseded: West Bengal
+
+`scripts/state_WB.py` is superseded by **external_data_sources/wbjee/** (six
+years 2021-2026 incl. the live 2026 cycle, BQ `wbjee_fact_cutoffs`, open-data
+published). WB remains here only as an input to the consolidated 5-cat CSV.
+
 ## ⚠️ Copied as-is — not yet decoupled
 
 Written for the College DB layout; paths point at that repo's `source/<XX>/` and
