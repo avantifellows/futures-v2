@@ -1,4 +1,14 @@
 """
+SUPERSEDED (2026-08-21) — KEAM now lives in external_data_sources/keam/.
+
+That pipeline archives both cycles CEE still serves (2025 + the live 2026
+counselling, incl. the new Trial phase and the arch/pharm/medical PDFs),
+fixes the page-spill course bug this parser has (course headers are not
+repeated across page breaks; resetting per page orphans spilled rows to
+course=None), and loads BigQuery `keam_fact_cutoffs` (19,610 rows). This
+copy stays for the consolidated state_cet 5-cat product only; do not
+extend it.
+
 Kerala KEAM — engineering closing-ranks pipeline.
 
 Authority:  Commissioner for Entrance Examinations (CEE), Kerala

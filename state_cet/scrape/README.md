@@ -8,6 +8,13 @@ Verbatim copy of the state-CET scrape pipeline from the `College DB` repo
 - **`source/`** (gitignored, ~117 MB in the bundle, belongs in GCS) — the raw
   cutoff PDFs/HTML per state.
 
+## Superseded: Kerala
+
+`scripts/state_KL.py` is superseded by **external_data_sources/keam/** (2025 +
+the live 2026 cycle, BQ `keam_fact_cutoffs`, open-data published, and a fix
+for this parser's page-spill course bug). KL remains here only as an input to
+the consolidated 5-cat CSV.
+
 ## Superseded: West Bengal
 
 `scripts/state_WB.py` is superseded by **external_data_sources/wbjee/** (six
