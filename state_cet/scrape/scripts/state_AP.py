@@ -1,4 +1,14 @@
 """
+SUPERSEDED (2026-08-21) — AP EAPCET now lives in external_data_sources/apeapcet/.
+
+The data hunt this file's notes called for is done: APSCHE republished the
+2025 consolidated last-rank PDF on the live CAP portal (cap.apcfss.in - the
+aptonline host is dead), and that pipeline archives it, parses all 22
+category x gender columns (SC now sub-classified I/II/III), and loads
+BigQuery `apeapcet_fact_cutoffs` (29,848 rows). The 2022 proxy is retired.
+This copy stays for the consolidated state_cet 5-cat product only; do not
+extend it.
+
 Andhra Pradesh AP-EAPCET (formerly AP EAMCET) — engineering closing-ranks pipeline.
 
 Authority:  APSCHE (AP State Council of Higher Education)

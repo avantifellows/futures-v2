@@ -8,6 +8,13 @@ Verbatim copy of the state-CET scrape pipeline from the `College DB` repo
 - **`source/`** (gitignored, ~117 MB in the bundle, belongs in GCS) — the raw
   cutoff PDFs/HTML per state.
 
+## Superseded: Andhra Pradesh
+
+`scripts/state_AP.py` is superseded by **external_data_sources/apeapcet/** -
+the 2025 consolidated last ranks from the live CAP portal replace this
+file's 2022 proxy; BQ `apeapcet_fact_cutoffs`, open-data published, predictor
+exam live. AP remains here only as an input to the consolidated 5-cat CSV.
+
 ## Superseded: Kerala
 
 `scripts/state_KL.py` is superseded by **external_data_sources/keam/** (2025 +
