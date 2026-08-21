@@ -1,4 +1,15 @@
 """
+SUPERSEDED (2026-08-21) — OJEE now lives in external_data_sources/ojee/.
+
+The 2025 B.Tech OR-CR this file said was login-gated is now public: OJEE
+published it in May 2026 on ojee.nic.in/opening-closing-rank/ as reference
+for the live 2026 cycle. That pipeline archives it, untangles the PDF's
+physically overprinted text deterministically, tags the document's three
+rank scales (B.Tech = JEE MAIN ranks / B.Arch-B.Plan / film), and loads
+BigQuery `ojee_fact_cutoffs` (1,543 rows). The 2024 proxy is retired.
+This copy stays for the consolidated state_cet 5-cat product only; do not
+extend it.
+
 Odisha OJEE — engineering closing-ranks pipeline.
 
 Authority:  OJEE Cell, Odisha (engineering counselling under SAMS Odisha)

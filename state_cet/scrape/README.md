@@ -8,6 +8,13 @@ Verbatim copy of the state-CET scrape pipeline from the `College DB` repo
 - **`source/`** (gitignored, ~117 MB in the bundle, belongs in GCS) — the raw
   cutoff PDFs/HTML per state.
 
+## Superseded: Odisha
+
+`scripts/state_OD.py` is superseded by **external_data_sources/ojee/** - the
+2025 B.Tech OR-CR (published openly in May 2026) replaces this file's 2024
+proxy; BQ `ojee_fact_cutoffs`, open-data published, predictor exam live on
+JEE Main ranks. OD remains here only as an input to the consolidated 5-cat CSV.
+
 ## Superseded: Andhra Pradesh
 
 `scripts/state_AP.py` is superseded by **external_data_sources/apeapcet/** -
